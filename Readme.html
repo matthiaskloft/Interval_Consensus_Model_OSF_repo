@@ -389,6 +389,8 @@ supplementary material.</p>
 <p>This folder contains the code to reproduce our results, as well as
 the supplementary files for our simulation studies.</p>
 <ul>
+<li><code>00_download_big_files_osf.R</code>: Script to download the fit
+files and simulation results from the OSF storage.</li>
 <li><code>00_functions.R</code>: Auxiliary functions</li>
 <li><code>01a_simluation_study_final_v2.Rmd</code>: Code for the main
 simulation study. The corresponding <code>.R</code>-file was used to run
@@ -445,6 +447,10 @@ quantifiers</li>
 </div>
 <div id="reproducing-our-results" class="section level2">
 <h2>Reproducing our results</h2>
+<p>If you want to reproduce our results, you first need to download the
+fit files and simulation results by running the script
+<code>src/00_download_big_files_osf.R</code>. These files are too large
+to be synced via GitHub and therefore are stored in the OSF storage.</p>
 <p>If you have installed Docker and Make, you can use the following
 files to reproduce the main results of our simulation study within a
 Docker container:</p>

@@ -7,6 +7,8 @@ if (!require("pacman")) install.packages("pacman")
 pacman::p_load(packages, update = F, character.only = T)
 
 
+
+
 # remove existing fits folders
 if (dir.exists(here("fits"))) {
   unlink(here("fits"), recursive = T)

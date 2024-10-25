@@ -18,6 +18,7 @@ A BiBTeX entry for LaTeX users is:
 
 
 
+
 ## Folder Structure
 ### `data/`
 
@@ -36,6 +37,7 @@ This folder contains the results of the simulation studies.
 
 This folder contains the code to reproduce our results, as well as the supplementary files for our simulation studies. 
 
+- `00_download_big_files_osf.R`: Script to download the fit files and simulation results from the OSF storage.
 - `00_functions.R`: Auxiliary functions
 - `01a_simluation_study_final_v2.Rmd`: Code for the main simulation study. The corresponding `.R`-file was used to run the simulation on a server.
 - `01b_sim_visualizations_v2.Qmd`: Visualizations of the results of the main simulation study. The corresponding `.html` file shows a rendered version of the document.
@@ -62,6 +64,12 @@ Contains the Stan models.
 
 
 ## Reproducing our results
+
+If you want to reproduce our results, you first need to download the fit files 
+and simulation results by running the script `src/00_download_big_files_osf.R`.
+These files are too large to be synced via GitHub and therefore are stored in the 
+OSF storage.
+
 
 If you have installed Docker and Make, you can use the following files to reproduce the main results of our simulation study within a Docker container:
 
