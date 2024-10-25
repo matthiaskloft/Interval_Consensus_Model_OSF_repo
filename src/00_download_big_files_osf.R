@@ -14,7 +14,7 @@ if (dir.exists(here("fits"))) {
   unlink(here("fits"), recursive = T)
 }
 if (dir.exists(here("sim_results"))) {
-  unlink(here("sim_res"), recursive = T)
+  unlink(here("sim_results"), recursive = T)
 }
 
 
