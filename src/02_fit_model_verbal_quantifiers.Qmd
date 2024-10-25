@@ -1,0 +1,1523 @@
+---
+title: "Interval Truth Model"
+subtitle: "Empirical Example: Verbal Quantifiers"
+author: 
+ - name: Matthias Kloft
+   orcid: 0000-0003-1845-6957
+   affiliations: University of Marburg  
+ - name: Björn S. Siepe
+   orcid: 0000-0002-9558-4648
+   affiliations: University of Marburg
+ - name: Daniel W. Heck
+   orcid: 0000-0002-6302-9252
+   affiliations: University of Marburg
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-tools: true
+    code-summary: "Show the code"
+    fig-width: 7
+    fig-height: 4.5
+    embed-resources: true
+execute:
+  message: false
+  warning: false
+params: 
+  refit: false
+---
+
+```{r setup, include = FALSE}
+# Libraries
+packages <- c(
+  "quarto",
+  "tidyverse",
+  "yardstick",
+  "readxl",
+  "cmdstanr",
+  "bayesplot",
+  "bayesTestR",
+  "posterior",
+  "bayestestR",
+  "rmarkdown",
+  "cowplot",
+  "svglite",
+  "psych",
+  "here",
+  "ggpubr",
+  "ggokabeito",
+  "ggh4x",
+  "ggtext"
+)
+# in case cmdstanr is not installed
+# install.packages("cmdstanr",
+#                  repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+
+if (!require("pacman")) install.packages("pacman") 
+pacman::p_load(packages, update = F, character.only = T)
+source("00_functions.R")
+```
+
+# Load Data
+```{r}
+### Load Data
+df_long <- read_rds(here("data", "interval_multi_apps_long.rds"))
+
+# item names
+item_names_quantifier <- df_long %>% 
+  dplyr::select(jj, name_en) %>% 
+  distinct() %>% 
+  arrange(jj) %>% 
+  pull(name_en)
+```
+
+## Stan Data
+```{r}
+### Stan data declaration
+df_long <- df_long %>% dplyr::filter(!is.na(x_splx_1))
+
+I = length(unique(df_long$ii))
+J = length(unique(df_long$jj))
+N  = nrow(df_long)
+ii = df_long$ii
+jj = df_long$jj
+nn = c(1:N)
+Y_splx = cbind(df_long$x_splx_1,
+           df_long$x_splx_2,
+           df_long$x_splx_3) %>% 
+  as.matrix()
+
+#Y_splx[is.na(Y_splx)]
+
+# # sanity check: all rows sum to 1
+# check <- apply(Y_splx, 1, sum) %>% as.data.frame()
+# table(check)
+
+## stan data list
+stan_data <- list(
+  I = I,
+  J = J,
+  N = N,
+  ii = ii,
+  jj = jj,
+  nn = nn,
+  Y_splx = Y_splx
+)
+
+# Choose model to fit
+model_name <- "itm_beta"
+```
+
+# Fit Full Model
+
+We first fit the full model to the verbal quantifier data to see what the 
+parameter estimates look like. We can subsequently customize the model.
+
+## Compile Model
+```{r compile}
+#| eval: !expr params$refit
+
+# Compile model
+model <-
+  cmdstanr::cmdstan_model(
+    stan_file = here("src", "models", paste0(model_name, ".stan")),
+    pedantic = TRUE,
+    quiet = FALSE
+  )
+```
+
+## Fit Model
+```{r fit generic, eval=FALSE}
+#| eval: !expr params$refit
+
+# number of MCMC chains
+n_chains <- 4
+# Run sampler
+fit <- model$sample(
+  data = stan_data,
+  seed = 2023,
+  chains = n_chains,
+  parallel_chains = n_chains,
+  iter_warmup = 500,
+  iter_sampling = 500,
+  refresh = 500,
+  thin = 1,
+  adapt_delta = .8,
+  init = .1
+)
+
+# save fit
+fit$save_object(file =  here("fits", paste0(model_name, "quantifier_full_fit.RDS")))
+```
+
+```{r}
+# load  fit
+fit <- readRDS(file =  here("fits", paste0(model_name, "quantifier_full_fit.RDS")))
+```
+
+***
+
+```{r}
+parameters <- c(
+  "Tr_loc",
+  "Tr_wid",
+  "E_loc",
+  "E_wid",
+  "a_loc",
+  "b_loc",
+  "lambda_loc",
+  "lambda_wid",
+  "omega",
+  "mu_E",
+  "sigma_I",
+  "sigma_lambda",
+  "rho_lambda",
+  "rho_E",
+  "rho_lambda"
+)
+```
+
+```{r}
+estimates_summary <- fit$summary(variables = parameters)
+```
+
+### Sampler Diagnostics
+
+```{r}
+# sampler diagnostics
+fit$sampler_diagnostics(format = "df") %>% 
+  psych::describe(quant = c(.05,.95),) %>%
+  round(2) %>%  
+  as.data.frame() %>% 
+  dplyr::select(median, min, Q0.05, Q0.95,  max) %>% 
+  .[-c(7:9),]
+```
+
+```{r}
+# convergence diagnostics
+convergence_summary <- 
+  fit$draws(format = "df", variables = parameters) %>%
+  summarise_draws(.x = ., "rhat", "ess_bulk", "ess_tail") %>%
+  remove_missing() %>%
+  select(-variable) %>%
+  psych::describe(., quant = c(.05, .95)) %>%
+  as.data.frame() %>%
+  select(median, Q0.05, Q0.95, min, max)
+
+convergence_summary %>% round(3)
+```
+
+### Effective sample size (ESS) & Rhat Plots
+```{r}
+# color scheme
+color_scheme_set(scheme = "purple")
+
+# Effective sample sizes
+plot_neff <-
+  mcmc_neff_hist(bayesplot::neff_ratio(fit, pars = parameters), binwidth = .01) +
+  labs(title = "A") +
+  guides(color = FALSE, fill = FALSE) +
+  theme(
+    legend.text = element_blank(),
+    legend.key = element_blank(),
+    title = element_text(size = 16, face = "bold")
+  )
+# Rhat
+plot_rhat <-
+  bayesplot::mcmc_rhat_hist(bayesplot::rhat(fit, pars = parameters)) +
+  labs(title = "B") +
+  guides(color = FALSE, fill = FALSE) +
+  theme(
+    legend.text = element_blank(),
+    legend.key = element_blank(),
+    title = element_text(size = 16, face = "bold")
+  ) +
+  yaxis_text(on = TRUE)
+
+# Combined plot
+plot_diagnostics <- gridExtra::grid.arrange(plot_neff, plot_rhat, ncol = 2)
+```
+
+## Parameter Plots
+```{r}
+# color scheme
+color_scheme_set(scheme = "purple")
+```
+
+### Person Competence: Location
+```{r }
+# order estimates by size
+E_loc_ordered <-
+  fit$summary("E_loc") %>% 
+  as.data.frame() %>% 
+  arrange(median) %>% 
+  select(variable) %>% 
+  unlist()
+
+# plot
+mcmc_intervals(fit$draws(E_loc_ordered), point_est = "median", transformations = "log") +
+  labs(
+    subtitle = "Person Competence: Location",
+    x = expression(E[loc]),
+    y = "Respondent"
+  ) +
+  scale_y_discrete(labels = NULL, expand = expansion(.02)) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### Person Competence: Width
+```{r }
+# order estimates by size of theta
+E_wid_ordered <- 
+  str_replace(E_loc_ordered, "E_loc", "E_wid")
+
+# plot
+mcmc_intervals(fit$draws(E_wid_ordered), point_est = "median",transformations = "log") +
+  labs(subtitle = "Person Competence: Width",
+       x = expression(E[wid]),
+       y = "Respondent") +
+  scale_y_discrete(labels = NULL, expand = expansion(.02)) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### Correlation: Person Competence Location vs. Width
+```{r fig.height = 2}
+mcmc_intervals(fit$draws("rho_E"), point_est = "median") +
+  bayesplot::vline_0(linetype = "dashed", color = "grey70") +
+  labs(
+    subtitle = "Correlation: Person Competence Location vs. Width",
+    x = expression(rho[E]),
+    y = "Respondent"
+  ) +
+  scale_x_continuous(limits = c(-1,1), expand = expansion()) +
+  theme_itm(base_size = 16, hide_axis_text_y = TRUE) +
+  theme(panel.grid = element_blank())
+```
+
+### Person Scaling Bias: Location
+```{r }
+# order estimates by size
+a_loc_ordered <-
+  fit$summary("a_loc") %>% 
+  as.data.frame() %>% 
+  arrange(median) %>% 
+  select(variable) %>% 
+  unlist()
+
+# plot
+  mcmc_intervals(fit$draws(a_loc_ordered), point_est = "median", transformations = "log") +
+  labs(
+    subtitle = "Person Scaling Bias: Location",
+    x = expression(a[i]),
+    y = "Respondent"
+  ) +
+  scale_y_discrete(labels = NULL, expand = expansion(.02)) +
+  theme_itm(base_size = 16, hide_axis_text_y = TRUE) +
+  theme(panel.grid = element_blank())
+```
+
+### Person Shifting Bias: Location
+```{r }
+# order estimates by size
+b_loc_ordered <-
+  fit$summary("b_loc") %>% 
+  as.data.frame() %>% arrange(median) %>% 
+  select(variable) %>% 
+  unlist()
+
+# plot
+  mcmc_intervals(fit$draws(b_loc_ordered), point_est = "median") +
+  labs(
+    subtitle = "Person Shifting Bias: Location",
+    x = expression(b_loc[i]),
+    y = "Respondent"
+  ) +
+  scale_y_discrete(labels = NULL, expand = expansion(.02)) +
+  theme_itm(base_size = 16, hide_axis_text_y = TRUE) +
+  theme(panel.grid = element_blank())
+```
+
+We find no relevant variance for the person shifting bias. The model should 
+therefore be simplfied by ommitting the person shifting bias.
+
+
+### Person Shifting Bias: Width
+```{r }
+# order estimates by size of theta
+b_wid_ordered <- 
+  str_replace(b_loc_ordered, "b_loc", "b_wid")
+
+# plot
+mcmc_intervals(fit$draws(b_wid_ordered), point_est = "median") +
+  labs(
+    subtitle = "Person Shifting Bias: Width",
+    x = expression(b_wid[i]),
+    y = "Respondent"
+  ) +
+  scale_y_discrete(labels = NULL, expand = expansion(.02)) +
+  theme_itm(base_size = 16, hide_axis_text_y = TRUE) +
+  theme(panel.grid = element_blank())
+```
+
+### Item Discernability: Location
+```{r }
+mcmc_intervals(fit$draws("lambda_loc"), point_est = "median", transformations = "log") +
+  labs(
+    subtitle = "Item Discernability: Location",
+    x = expression(lambda[loc]),
+    y = "Respondent"
+  ) +
+  scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02)) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### Item Discernability: Width
+```{r }
+mcmc_intervals(fit$draws("lambda_wid"), point_est = "median",transformations = "log") +
+  labs(
+    subtitle = "Item Discernability: Width",
+    x = expression(lambda[wid]),
+    y = "Respondent"
+  ) +
+  scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02)) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### Correlation: Iem Discernibility, Location vs. Width
+```{r fig.height=2}
+mcmc_intervals(fit$draws("rho_lambda"), point_est = "median") +
+  bayesplot::vline_0(linetype = "dashed", color = "grey70") +
+  labs(x = expression(rho[lambda]), y = NULL) +
+  scale_x_continuous(limits = c(-1, 1), expand = expansion()) +
+  theme_itm(base_size = 16, hide_axis_text_y = TRUE) +
+  theme(panel.grid = element_blank())
+```
+
+### Correlation of Residuals: Location vs. Width
+```{r }
+mcmc_intervals(fit$draws(c("omega")), point_est = "median") +
+  
+  labs(
+    title = "B",
+    subtitle = "DDRM: Expansion",
+    x = expression(omega),
+    y = "Respondent"
+  ) +
+  scale_x_continuous(limits = c(-1,1), expand = expansion()) +
+  scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02)) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### Latent Consensus Intervals
+```{r}
+latent_truth <- data.frame(
+  idx = 1:J,
+  name = item_names_quantifier,
+  lower = fit$summary("Tr_splx") %>% as.data.frame() %>% pull(median) %>% .[1:J],
+  wid = fit$summary("Tr_splx") %>% as.data.frame() %>% pull(median) %>% .[(J +
+                                                                             1):(J * 2)]
+) %>%
+  mutate(loc = lower + wid / 2, upper = lower + wid) %>%
+  arrange(lower)
+
+latent_truth %>% 
+  ggplot(aes(x = loc, y = 1:J)) +
+  geom_errorbarh(aes(xmin = lower, xmax = upper), height = 0.3) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = seq(0, 1, .25),
+    expand = expansion()
+  ) +
+  scale_y_continuous(breaks = 1:J, labels = item_names_quantifier[latent_truth$idx]) +
+  labs(x = "Latent Truth",
+       y = "Item") +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank(), , axis.line.y = element_blank())
+
+# save plot
+ggsave(
+  here("plots", "consensus_intervals_full_model.pdf"),
+  width = 15,
+  height = 8,
+  units = "cm",
+  scale = 1.4
+)
+```
+
+```{r}
+latent_truth %>% 
+  mutate(across(c(lower, wid, loc, upper), ~round(., 3)*100)) %>% 
+  select(-idx,-wid)
+```
+
+
+***
+
+# Fit Customized Model
+
+We removed the person shifting bias from the model.
+
+
+### Compile Model  
+Specify model name:
+```{r}
+# Choose model to fit
+model_name_quantifier <- "itm_quantifier_beta"
+```
+
+```{r}
+#| eval: !expr params$refit
+
+# Compile model
+model_quantifier <-
+  cmdstanr::cmdstan_model(
+    stan_file = here("src", "models", paste0(model_name_quantifier, ".stan")),
+    pedantic = TRUE,
+    quiet = TRUE
+  )
+```
+
+### Fit Model 
+```{r fit custom, eval=FALSE}
+#| eval: !expr params$refit
+
+# number of MCMC chains
+n_chains <- 4
+
+# Run sampler
+fit_quantifier <- model_quantifier$sample(
+  data = stan_data, 
+  seed = 2023,
+  chains = n_chains,
+  parallel_chains = n_chains,
+  iter_warmup = 500,
+  iter_sampling = 1000,
+  refresh = 500,
+  thin = 1,
+  init = .1,
+  adapt_delta = .8
+)
+  
+# save fit
+fit_quantifier$save_object(file =  here("fits", paste0(model_name_quantifier, "_custom_fit.RDS")))
+```
+
+```{r load fit}
+# load  fit
+fit_quantifier <- readRDS(file =  here("fits", paste0(model_name_quantifier, "_custom_fit.RDS")))
+```
+
+```{r}
+parameters <- parameters[parameters != "b_loc"]
+```
+
+
+### Summary
+```{r}
+estimates_summary_quantifier <- fit_quantifier$summary(parameters)
+```
+
+### Sampler Diagnostics
+```{r}
+# sampler diagnostics
+fit_quantifier$sampler_diagnostics(format = "df") %>% 
+  psych::describe(quant = c(.05,.95),) %>%
+  round(2) %>%  
+  as.data.frame() %>% 
+  dplyr::select(median, min, Q0.05, Q0.95,  max) %>% 
+  .[-c(7:9),]
+```
+
+```{r}
+# convergence diagnostics
+convergence_summary <- 
+  fit_quantifier$draws(format = "df", variables = parameters) %>%
+  summarise_draws(.x = ., "rhat", "ess_bulk", "ess_tail") %>%
+  remove_missing() %>%
+  select(-variable) %>%
+  psych::describe(., quant = c(.05, .95)) %>%
+  as.data.frame() %>%
+  select(median, Q0.05, Q0.95, min, max)
+
+convergence_summary %>% round(3)
+```
+
+### Effective sample size (ESS) & Rhat Plots
+```{r}
+# color scheme
+color_scheme_set(scheme = "purple")
+
+# Effective sample sizes
+plot_neff <-
+  mcmc_neff_hist(bayesplot::neff_ratio(fit_quantifier, pars = parameters),
+                 binwidth = .01) +
+  labs(title = "A") +
+  guides(color = FALSE, fill = FALSE) +
+  theme(
+    legend.text = element_blank(),
+    legend.key = element_blank(),
+    title = element_text(size = 16, face = "bold")
+  )
+# Rhat
+plot_rhat <-
+  bayesplot::mcmc_rhat_hist(bayesplot::rhat(fit_quantifier, pars = parameters)) +
+  labs(title = "B") +
+  guides(color = FALSE, fill = FALSE) +
+  theme(
+    legend.text = element_blank(),
+    legend.key = element_blank(),
+    title = element_text(size = 16, face = "bold")
+  ) +
+  yaxis_text(on = TRUE)
+
+# Combined plot
+plot_diagnostics <- gridExtra::grid.arrange(plot_neff, plot_rhat, ncol = 2)
+```
+
+## Parameter Plots
+```{r}
+# color scheme
+color_scheme_set(scheme = "purple")
+```
+
+### Person Competence: Location
+```{r }
+# order estimates by size
+E_loc_ordered <-
+  fit_quantifier$summary("E_loc") %>% 
+  as.data.frame() %>% 
+  arrange(median) %>% 
+  select(variable) %>% 
+  unlist()
+
+# plot
+  mcmc_intervals(fit_quantifier$draws(E_loc_ordered), point_est = "median", transformations = "log") +
+  labs(
+    subtitle = "Person Competence: Location",
+    x = expression(log(E[i])),
+    y = "Respondent"
+  ) +
+  scale_y_discrete(labels = NULL, expand = expansion(.02)) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### Person Competence: Width
+```{r }
+# order estimates by size of theta
+E_wid_ordered <- 
+  str_replace(E_loc_ordered, "E_loc", "E_wid")
+
+# plot
+
+  mcmc_intervals(fit_quantifier$draws(E_wid_ordered), point_est = "median",transformations = "log") +
+  labs(subtitle = "Person Competence: Width",
+       x = expression(log(E_wid[i])),
+       y = "Respondent") +
+  scale_y_discrete(labels = NULL, expand = expansion(.02)) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### Correlation: Person Competence Location vs. Width
+```{r fig.height = 2}
+mcmc_intervals(fit_quantifier$draws("rho_E"), point_est = "median") +
+  labs(
+    title = "B",
+    subtitle = "Correlation: Person Competence Location vs. Width",
+    x = expression(Omega[i]),
+    y = "Respondent"
+  ) +
+  xlim(-1,1)  +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+```{r}
+fit_quantifier$draws("rho_E") %>% 
+  bayestestR::describe_posterior(ci_method = "hdi")
+```
+
+### Person Scaling Bias: Location
+```{r }
+# order estimates by size
+a_loc_ordered <-
+  fit_quantifier$summary("a_loc") %>% 
+  as.data.frame() %>% arrange(median) %>% 
+  select(variable) %>% 
+  unlist()
+
+# plot
+mcmc_intervals(fit_quantifier$draws(a_loc_ordered), point_est = "median", transformations = "log") +
+  labs(
+    subtitle = "Person Scaling Bias: Location",
+    x = expression(log(a[i])),
+    y = "Respondent"
+  ) +
+  scale_y_discrete(labels = NULL, expand = expansion(.02)) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### Person Shifting Bias: Width
+```{r }
+mcmc_intervals(fit_quantifier$draws("b_wid"), point_est = "median") +
+  labs(
+    subtitle = "Person Shifting Bias: Width",
+    x = expression(b_wid[i]),
+    y = "Respondent"
+  ) +
+  scale_y_discrete(labels = NULL, expand = expansion(.02)) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### Item Discernability: Location
+```{r }
+ mcmc_intervals(fit_quantifier$draws("lambda_loc"), point_est = "median", transformations = "log") +
+  labs(
+    subtitle = "Item Discernability: Location",
+    x = expression(log(lambda[loc])),
+    y = "Item"
+  ) +
+  scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02))  +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### Item Discernability: Width
+```{r }
+mcmc_intervals(fit_quantifier$draws("lambda_wid"), point_est = "median",transformations = "log") +
+  labs(
+    subtitle = "Item Discernability: Width",
+    x = expression(log(lambda[wid])),
+    y = "Item"
+  ) +
+  scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02)) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### Correlation: Item Discernibility Location vs. Width
+```{r fig.height=2}
+mcmc_intervals(fit_quantifier$draws("rho_lambda"), point_est = "median") +
+  labs(
+    x = expression(Omega[j])
+  ) +
+  xlim(-1,1) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+
+```{r}
+fit_quantifier$draws("rho_lambda") %>% 
+  bayestestR::describe_posterior(ci_method = "hdi")
+```
+
+
+### Correlation Between Location and Width
+```{r }
+  mcmc_intervals(fit_quantifier$draws(c("omega")), point_est = "median") +
+  labs(
+    subtitle = "Residual Correlation",
+    x = expression(omega[j]),
+    y = "Item"
+  ) +
+  scale_x_continuous(limits = c(-1,1)) +
+  scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02)) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### Latent Truth Intervals
+```{r}
+latent_truth <- data.frame(
+  idx = 1:J,
+  name = item_names_quantifier,
+  lower_consensus = fit_quantifier$summary("Tr_splx") %>%
+    as.data.frame() %>%
+    pull(median) %>%
+    .[1:J],
+  wid_consensus = fit_quantifier$summary("Tr_splx") %>%
+    as.data.frame() %>%
+    pull(median) %>%
+    .[(J + 1):(J * 2)]
+) %>%
+  mutate(
+    loc_consensus = lower_consensus + wid_consensus / 2,
+    upper_consensus = lower_consensus + wid_consensus
+  ) %>%
+  arrange(lower_consensus)
+
+latent_truth %>%
+  # plot
+  ggplot(aes(x = loc_consensus, y = 1:J)) +
+  geom_errorbarh(aes(xmin = lower_consensus, xmax = upper_consensus), height = 0.3) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = seq(0, 1, .25),
+    expand = expansion()
+  ) +
+  scale_y_continuous(breaks = 1:J, labels = item_names_quantifier[latent_truth$idx]) +
+  labs(x = "Latent Truth", y = "Item") +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank(), axis.line.y = element_blank())
+
+# save plot
+ggsave(
+  here("plots", "consensus_intervals_custom_model.pdf"),
+  width = 15,
+  height = 8,
+  units = "cm",
+  scale = 1.4
+)
+```
+
+```{r}
+latent_truth %>% 
+  mutate(across(c(lower_consensus, wid_consensus, loc_consensus, upper_consensus), ~round(., 3)*100)) %>% 
+  select(-idx,-wid_consensus)
+```
+
+
+***
+
+# Density Plots
+
+### Prepare Data
+```{r}
+df_long <- df_long %>%
+  group_by(jj) %>%
+  mutate(
+    loc_mean = mean((x_L + x_U) / 2, na.rm = TRUE),
+    wid_mean = mean(x_U - x_L, na.rm = TRUE),
+    lower_mean = loc_mean - wid_mean / 2,
+    upper_mean = loc_mean + wid_mean / 2,
+    loc_mean_logit = mean(x_bvn_1, na.rm = TRUE),
+    wid_mean_logit = mean(x_bvn_2, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+splx <- bvn_to_simplex(df_long[, c("loc_mean_logit", "wid_mean_logit")])
+df_long$lower_mean_logit <- splx[, 1]
+df_long$upper_mean_logit <- 1 - splx[, 3]
+```
+
+### Plot: Verbal Quantifiers All
+```{r fig.height=15}
+df <- df_long %>%
+  select(jj,
+         name_en,
+         x_L,
+         x_U,
+         lower_mean,
+         upper_mean,
+         lower_mean_logit,
+         upper_mean_logit,
+         truth) %>%
+  remove_missing(vars = c("x_L", "x_U")) %>%
+  full_join(., latent_truth, by = c("jj" = "idx"))
+
+plot_density <-
+  plot_intvls_aggregated(
+    lower = df$x_L,
+    upper = df$x_U,
+    item_id = as.double(df$jj),
+    lower_mean = df$lower_consensus * 100,
+    upper_mean = df$upper_consensus * 100,
+    lower_mean_logit = df$lower_mean_logit * 100,
+    upper_mean_logit = df$upper_mean_logit * 100,
+    item_name = df$name_en,
+    facet_wrap = TRUE,
+    min = 0,
+    max = 100,
+    step_size = 1,
+    show_quantiles = FALSE
+  )
+
+plot_density
+
+# save plot
+ggsave(
+  plot = plot_density,
+  here("plots", "verbal_quantifier_densities_all.pdf"),
+  width = 15,
+  height = 15,
+  units = "cm",
+  scale = 1.7
+)
+```
+
+### Plot: Verbal Quantifiers Selection for Article
+```{r}
+df <- df_long %>%
+  select(
+    jj,
+    name_en,
+    x_L,
+    x_U,
+    lower_mean,
+    upper_mean,
+    lower_mean_logit,
+    upper_mean_logit,
+    truth
+  ) %>%
+  dplyr::filter(name_en %in% c("fifty-fifty chance", "hardly", "potentially")) %>%
+  full_join(., latent_truth, by = c("jj" = "idx")) %>%
+  remove_missing(vars = c("x_L", "x_U"))
+
+
+# Layout for facet wrap
+design <- matrix(c(1, 2, 1, 3), 2, 2)
+# plot
+plot_selection <-
+  plot_intvls_aggregated(
+    lower = df$x_L,
+    upper = df$x_U,
+    item_id = as.double(df$jj),
+    lower_mean = df$lower_consensus * 100,
+    upper_mean = df$upper_consensus * 100,
+    lower_mean_logit = df$lower_mean_logit * 100,
+    upper_mean_logit = df$upper_mean_logit * 100,
+    item_name = (df$name_en),
+    truth = df$truth,
+    facet_wrap = TRUE,
+    design = design,
+    ncol = 2,
+    min = 0,
+    max = 100,
+    step_size = 1,
+    show_quantiles = FALSE
+  )
+plot_selection
+
+# save plot
+ggsave(
+  plot = plot_selection,
+  here("plots", "verbal_quantifier_densities_example.pdf"),
+  width = 15,
+  height = 7.5,
+  units = "cm",
+  scale = 1.6
+)
+```
+
+
+```{r}
+### Plot for slides
+
+df <- df_long %>%
+    select(
+    jj,
+    name_en,
+    x_L,
+    x_U,
+    lower_mean,
+    upper_mean,
+    lower_mean_logit,
+    upper_mean_logit,
+    truth
+  ) %>%
+  dplyr::filter(name_en %in% c("fifty-fifty chance")) %>%
+  full_join(., latent_truth, by = c("jj" = "idx")) %>%
+  remove_missing(vars = c("x_L", "x_U")) 
+
+
+# plot
+plot_selection <-  plot_intvls_aggregated(
+  lower = df$x_L,
+  upper = df$x_U,
+  item_id = as.double(df$jj),
+  lower_mean = df$lower_consensus*100,
+  upper_mean = df$upper_consensus*100,
+  lower_mean_logit = df$lower_mean_logit*100,
+  upper_mean_logit = df$upper_mean_logit*100,
+  item_name = (df$name_en),
+  truth = df$truth,
+  facet_wrap = FALSE,
+  ncol = 2,
+  min = 0,
+  max = 100,
+  step_size = 1,
+  show_quantiles = FALSE
+)
+#plot_selection
+
+# save plot
+ggsave(
+  plot = plot_selection,
+  here("plots", "verbal_quantifier_densities_50-50.pdf"),
+  width = 15,
+  height = 5,
+  units = "cm",
+  scale = 1.6
+)
+
+ggsave(
+  plot = plot_selection,
+  here("plots", "verbal_quantifier_densities_50-50.svg"),
+  width = 15,
+  height = 5,
+  units = "cm",
+  scale = 1.6
+)
+```
+
+```{r}
+### Plot for slides
+df <- df_long %>%
+  select(
+    jj,
+    name,
+    name_en,
+    x_L,
+    x_U,
+    lower_mean,
+    upper_mean,
+    lower_mean_logit,
+    upper_mean_logit,
+    truth
+  ) %>%
+  dplyr::filter(name %in% c("meistens")) %>%
+  full_join(., latent_truth, by = c("jj" = "idx")) %>%
+  remove_missing(vars = c("x_L", "x_U")) 
+
+
+# plot
+plot_selection <-  plot_intvls_aggregated(
+  lower = df$x_L,
+  upper = df$x_U,
+  item_id = as.double(df$jj),
+  lower_mean = df$lower_consensus*100,
+  upper_mean = df$upper_consensus*100,
+  lower_mean_logit = df$lower_mean_logit*100,
+  upper_mean_logit = df$upper_mean_logit*100,
+  item_name = (df$name_en),
+  truth = df$truth,
+  facet_wrap = FALSE,
+  ncol = 2,
+  min = 0,
+  max = 100,
+  step_size = 1,
+  show_quantiles = FALSE
+)
+#plot_selection
+
+# save plot
+ggsave(
+  plot = plot_selection,
+  here("plots", "verbal_quantifier_densities_mostly.pdf"),
+  width = 15,
+  height = 5,
+  units = "cm",
+  scale = 1.6
+)
+
+ggsave(
+  plot = plot_selection,
+  here("plots", "verbal_quantifier_densities_mostly.svg"),
+  width = 15,
+  height = 5,
+  units = "cm",
+  scale = 1.6
+)
+```
+
+
+## Responses vs. Proficiency
+
+```{r}
+# prepare data
+proficiency_loc <- 
+  fit_quantifier$summary("E_loc") %>% as.data.frame() %>% select(median) %>% 
+  rename(proficiency_loc = median) %>%
+  mutate(ii = 1:I,
+         proficiency_loc = scale(log(proficiency_loc)))
+
+proficiency_wid <- 
+  fit_quantifier$summary("E_wid") %>% as.data.frame() %>% select(median) %>%
+  rename(proficiency_wid = median) %>%
+  mutate(ii = 1:I,
+         proficiency_wid = scale(log(proficiency_wid))) 
+
+proficiency_medians <-
+  full_join(proficiency_loc, proficiency_wid, by = c("ii" = "ii")) %>%
+  full_join(., df_long %>%
+              select(ii, x_L_u, x_U_u, name), by = c("ii" = "ii")) %>%
+  mutate(
+    proficiency = (proficiency_loc + proficiency_wid) / 2,
+    ii_ranked = factor(proficiency) %>% as.numeric()
+  ) %>%
+  arrange(proficiency) %>%
+  dplyr::filter(name == "Fuenfzig-Fuenfzig Chance")
+
+
+# plot
+plot_proficiency_vs_intervals <- 
+  proficiency_medians %>%
+  ggplot() +
+  geom_rect(aes(
+    xmin = 40,
+    xmax = 60,
+    ymin = 0,
+    ymax = max(ii_ranked) + 1
+  ), color = "grey80") +
+  geom_errorbar(aes(
+    y = (ii_ranked),
+    xmin = x_L_u,
+    xmax = x_U_u
+  ),  
+  alpha = .5,
+  width = 2,
+  linewidth = .5) +
+  geom_point(
+    aes(x = pnorm(proficiency), y = ii_ranked), 
+    shape = 16,
+    col = ggokabeito::palette_okabe_ito()[5]
+    ) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, .25),
+    labels = c("0", ".25", ".50", ".75", "1"),
+    expand = expansion()
+  ) +
+  scale_y_continuous(expand = expansion(0, .2)) +
+  labs(
+    x = "Response Interval / <span style='color: #0072B2;'>Transformed Proficiency</span>", 
+    y = "Respondent") +
+  coord_cartesian(clip = "off") +
+  theme_itm() +
+  theme(
+    axis.title.x = ggtext::element_markdown(),
+    axis.line = element_line(colour = "#6d6d6e", size = .3),
+    axis.ticks.x = element_line(colour = "#6d6d6e", size = .3),
+    axis.ticks.y = element_blank(),
+    axis.text.y = element_blank(),
+    panel.grid = ggplot2::element_blank(
+    )
+  )
+
+ggsave(
+  plot = plot_proficiency_vs_intervals,
+  filename = here("plots", "proficiency_vs_intervals.pdf"),
+  width = 15,
+  height = 10,
+  units = "cm",
+  scale = 1.4
+)
+
+plot_proficiency_vs_intervals
+```
+
+# Prior vs. Posterior
+## True Intervals
+```{r}
+latent_truth <- data.frame(
+  Tr_loc_splx_post = fit_quantifier$draws("Tr_loc_splx") %>%
+    unlist() %>%
+    as.vector(),
+  Tr_wid_splx_post = fit_quantifier$draws("Tr_wid_splx") %>%
+    unlist() %>%
+    as.vector()
+) %>%
+  mutate(
+    jj = factor(rep(1:J, each = nrow(.) / J)),
+    Tr_wid_splx_prior = rbeta(nrow(.), 1.2, 3),
+    Tr_loc_splx_prior = (1 - Tr_wid_splx_prior) * rbeta(nrow(.), 1, 1) + Tr_wid_splx_prior / 2
+  )
+
+Tr_bvn <- simplex_to_bvn(
+  cbind(
+    latent_truth$Tr_loc_splx_prior - .5 * latent_truth$Tr_wid_splx_prior,
+    latent_truth$Tr_wid_splx_prior,
+    1 - (
+      latent_truth$Tr_loc_splx_prior + .5 * latent_truth$Tr_wid_splx_prior
+    )
+  )
+)
+latent_truth <- cbind(latent_truth,
+                      Tr_loc_prior = Tr_bvn[, 1], Tr_wid_prior = Tr_bvn[, 2])
+
+
+latent_truth %>%
+  ggplot() +
+  geom_abline(intercept = 0,
+              slope = 2,
+              alpha = .7) +
+  geom_abline(intercept = 2,
+              slope = -2,
+              alpha = .7) +
+  geom_density_2d_filled(
+    aes(x = Tr_loc_splx_prior, 
+        y = Tr_wid_splx_prior), 
+    alpha = .3, 
+    binwidth = .05
+    ) +
+  geom_point(
+    aes(x = Tr_loc_splx_post, y = Tr_wid_splx_post, col = jj),
+    size = .3,
+    alpha = .3,
+    shape = 16
+  ) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  labs(x = "Location", y = "Width") +
+  # supress legends
+  guides(col = FALSE, fill = FALSE) +
+  theme_pubr()
+```
+
+
+## Hyper-Priors
+### sigma_lambda: Location
+```{r}
+sigma_lambda_loc <- data.frame(posterior = fit_quantifier$draws("sigma_lambda[1]", format = "list") %>% unlist() %>%  as.vector())
+sigma_lambda_loc$prior <- exp(rnorm(nrow(sigma_lambda_loc), log(.5), .5))
+
+sigma_lambda_loc %>%
+  ggplot() +
+  geom_density(aes(prior), fill = "lightblue", alpha = 1) +
+  geom_density(aes(exp(posterior * .5 + log(.5))), fill = "purple", alpha = .3) +
+  scale_x_continuous(limits = c(NA, 3), expand = expansion()) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Prior / Posterior", y = "Density")  +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### sigma_lambda: Width
+```{r}
+sigma_lambda_wid <- data.frame(
+  posterior = fit_quantifier$draws("sigma_lambda[2]", format = "list") %>% unlist() %>%  as.vector()
+)
+sigma_lambda_wid$prior <- exp(rnorm(nrow(sigma_lambda_loc), log(.5), .5))
+
+sigma_lambda_wid %>% 
+  ggplot() +
+  geom_density(
+    aes(prior),
+    fill = "lightblue",
+    alpha = 1  ) +
+  geom_density(aes(exp(posterior*.5+log(.5))),
+               fill = "purple",
+               alpha = .3
+               ) +
+  scale_x_continuous(
+    limits = c(NA, 3),
+    expand = expansion()
+  ) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Prior / Posterior", y = "Density") +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### sigma_E: Location
+```{r}
+sigma_E_loc <- data.frame(
+  posterior = fit_quantifier$draws("sigma_I[1]", format = "list") %>% unlist() %>%  as.vector()
+)
+sigma_E_loc$prior <- exp(rnorm(nrow(sigma_lambda_loc), log(.5), .5))
+
+sigma_E_loc %>% 
+  ggplot() +
+  geom_density(
+    aes(prior),
+    fill = "lightblue",
+    alpha = 1  ) +
+  geom_density(aes(exp(posterior*.5+log(.5))),
+               fill = "purple",
+               alpha = .3
+               ) +
+  scale_x_continuous(
+    limits = c(NA, 3),
+    expand = expansion()
+  ) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Prior / Posterior", y = "Density") +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### sigma_E: Width
+```{r}
+sigma_E_wid <- data.frame(
+  posterior = fit_quantifier$draws("sigma_I[2]", format = "list") %>% unlist() %>%  as.vector()
+)
+sigma_E_wid$prior <- exp(rnorm(nrow(sigma_lambda_loc), log(.5), .5))
+
+sigma_E_wid %>% 
+  ggplot() +
+  geom_density(
+    aes(prior),
+    fill = "lightblue",
+    alpha = 1  ) +
+  geom_density(aes(exp(posterior*.5+log(.5))),
+               fill = "purple",
+               alpha = .3
+               ) +
+  scale_x_continuous(
+    limits = c(NA, 3),
+    expand = expansion()
+  ) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Prior / Posterior", y = "Density") +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### mu_E: Location
+```{r}
+mu_E_loc <- data.frame(
+  posterior = fit_quantifier$draws("mu_E[1]", format = "list") %>% unlist() %>%  as.vector()
+)
+mu_E_loc$prior <- rnorm(nrow(sigma_lambda_loc))
+
+mu_E_loc %>% 
+  ggplot() +
+  geom_density(
+    aes(prior),
+    fill = "lightblue",
+    alpha = 1  ) +
+  geom_density(aes(posterior),
+               fill = "purple",
+               alpha = .3
+               ) +
+  scale_x_continuous(
+    limits = c(-4, 4),
+    expand = expansion()
+  ) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Prior / Posterior", y = "Density") +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### mu_E: Width
+```{r}
+mu_E_wid <- data.frame(
+  posterior = fit_quantifier$draws("mu_E[2]", format = "list") %>% unlist() %>%  as.vector()
+)
+mu_E_wid$prior <-  rnorm(nrow(sigma_lambda_loc))
+
+mu_E_wid %>% 
+  ggplot() +
+  geom_density(
+    aes(prior),
+    fill = "lightblue",
+    alpha = 1  ) +
+  geom_density(aes(posterior),
+               fill = "purple",
+               alpha = .3
+               ) +
+  scale_x_continuous(
+    limits = c(-4, 4),
+    expand = expansion()
+  ) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Prior / Posterior", y = "Density") +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+
+
+# Posterior Predictive Checks
+```{r}
+sample <- sample(1:1000, 100)
+Y_ppc_loc <- fit_quantifier$draws("Y_ppc_loc", format = "matrix")[sample,]
+Y_ppc_wid <- fit_quantifier$draws("Y_ppc_wid", format = "matrix")[sample,]
+Y_ppc_loc_splx <- fit_quantifier$draws("Y_ppc_loc_splx", format = "matrix")[sample,]
+Y_ppc_wid_splx <- fit_quantifier$draws("Y_ppc_wid_splx", format = "matrix")[sample,]
+```
+
+### Location: Bivariate Normal
+```{r}
+bayesplot::ppc_dens_overlay(y = df_long$x_bvn_1, yrep = Y_ppc_loc) +
+  xlim(-10, 10)
+```
+
+### Width: Bivariate Normal
+```{r}
+bayesplot::ppc_dens_overlay(
+  y = df_long$x_bvn_2,
+  yrep = Y_ppc_wid
+  ) +
+  xlim(-10,10) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### Location: Bounded
+```{r}
+bayesplot::ppc_dens_overlay(y = df_long$x_M_u, yrep = Y_ppc_loc_splx) +
+  xlim(0, 1)
+```
+
+### Width: Bounded
+```{r}
+bayesplot::ppc_dens_overlay(y = df_long$x_W_u, yrep = Y_ppc_wid_splx) +
+  xlim(0, 1) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### Lower Interval Bound
+```{r}
+bayesplot::ppc_dens_overlay(y = df_long$x_L_u, yrep = Y_ppc_loc_splx - Y_ppc_wid_splx/2) +
+  xlim(0, 1)
+```
+
+### Upper Interval Bound
+```{r}
+bayesplot::ppc_dens_overlay(y = df_long$x_U_u, yrep = Y_ppc_loc_splx + Y_ppc_wid_splx/2) +
+  xlim(0, 1) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+
+# Re-Fit Without Control Items
+
+## Stan Data
+```{r}
+### Stan data declaration
+df_long_no_controls <- 
+  df_long %>% 
+  dplyr::filter(!name %in% c("Fuenfzig-Fuenfzig Chance", "immer", "niemals")) %>% 
+  mutate(
+    ii = as.integer(as.factor(ii)),
+    jj = as.integer(as.factor(jj))
+  )
+
+## stan data list
+stan_data_no_controls <- list(
+  I = length(unique(df_long_no_controls$ii)),
+  J = length(unique(df_long_no_controls$jj)),
+  N = nrow(df_long_no_controls),
+  ii =  df_long_no_controls$ii,
+  jj = df_long_no_controls$jj,
+  nn = c(1:nrow(df_long_no_controls)),
+  Y_splx = cbind(
+    df_long_no_controls$x_splx_1,
+    df_long_no_controls$x_splx_2,
+    df_long_no_controls$x_splx_3
+  ) %>%
+    as.matrix()
+)
+```
+
+### Fit Model 
+```{r fit no controls, eval=FALSE}
+#| eval: !expr params$refit
+
+# number of MCMC chains
+n_chains <- 4
+
+# Run sampler
+fit_quantifier_no_controls <- model_quantifier$sample(
+  data = stan_data_no_controls, 
+  seed = 2023,
+  chains = n_chains,
+  parallel_chains = n_chains,
+  iter_warmup = 500,
+  iter_sampling = 1000,
+  refresh = 500,
+  thin = 1,
+  init = .1,
+  adapt_delta = .8
+)
+  
+# save fit
+fit_quantifier_no_controls$save_object(file =  here("fits", paste0(model_name_quantifier, "_no_controls_fit.RDS")))
+```
+
+```{r}
+# load  fit
+fit_quantifier_no_controls <- readRDS(file =  here("fits", paste0(model_name_quantifier, "_no_controls_fit.RDS")))
+```
+
+### Item Discernability: Location
+```{r }
+mcmc_intervals(
+  fit_quantifier_no_controls$draws("lambda_loc"),
+  point_est = "median",
+  transformations = "log"
+) +
+  labs(subtitle = "Item Discernability: Location",
+       x = expression(log(lambda[loc])),
+       y = "Item") +
+  scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02)) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+### Item Discernability: Width
+```{r }
+mcmc_intervals(
+  fit_quantifier_no_controls$draws("lambda_wid"),
+  point_est = "median",
+  transformations = "log"
+) +
+  labs(subtitle = "Item Discernability: Width",
+       x = expression(log(lambda[wid])),
+       y = "Item") +
+  scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02)) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+## Discernibility: Correlation Between Location and Width
+```{r fig.height=2}
+mcmc_intervals(fit_quantifier_no_controls$draws("rho_lambda"), point_est = "median") +
+  labs(
+    x = expression(Omega[j])
+  ) +
+  xlim(-1,1) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+```{r}
+fit_quantifier_no_controls$draws("rho_lambda") %>% 
+  bayestestR::describe_posterior(ci_method = "hdi")
+```
+
+
+## Proficiency: Correlation Between Location and Width
+```{r fig.height=2}
+mcmc_intervals(fit_quantifier_no_controls$draws("rho_E"), point_est = "median") +
+  labs(
+    x = expression(Omega[j])
+  ) +
+  xlim(-1,1) +
+  theme_itm(base_size = 16) +
+  theme(panel.grid = element_blank())
+```
+
+```{r}
+fit_quantifier_no_controls$draws("rho_E") %>% 
+  bayestestR::describe_posterior(ci_method = "hdi")
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```

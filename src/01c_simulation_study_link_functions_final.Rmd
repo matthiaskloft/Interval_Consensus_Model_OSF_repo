@@ -1,0 +1,744 @@
+---
+title: "Interval Truth Model - Simulation Study for the Link Functions"
+author: "Matthias Kloft & Björn Siepe"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    collapsed: no
+    smooth_scroll: yes
+  pdf_document:
+    toc: yes
+---
+
+# Preparation
+This script contains a simulation study for the Interval Truth Model. 
+
+```{r load-pkgs}
+packages <- c(
+  "tidyverse",
+  "SimDesign",
+  "rstan",
+  "here",
+  "posterior",
+  "bayesplot",
+  "psych"
+)
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(packages, update = F, character.only = T)
+
+if(!require("cmdstanr")){
+  install.packages("cmdstanr", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+  library(cmdstanr)
+}
+
+# default chunk options
+knitr::opts_chunk$set(
+  fig.height = 7,
+  fig.width = 10,
+  include = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+source(here("src", "00_functions.R"))
+```
+
+
+
+# Generation
+
+## Data-Generating Processes
+
+We vary the number of items and respondents as well as the link functions for generating the data and model:
+```{r sim-dgp}
+n_respondents <- 200
+n_items <- 20
+link <- c("ilr", "sb")
+# number of simulation repetitions
+n_rep <- 500
+
+
+df_design <- SimDesign::createDesign(
+  n_respondents = n_respondents,
+  n_items = n_items,
+  link_dgp = link,
+  link_model = link
+)
+
+```
+
+
+## Fixed Simulation Parameters
+
+```{r sim-pars}
+sim_pars <- list(
+    # Stan Sampling
+    n_chains = 4,
+    iter_warmup = 500,
+    iter_sampling = 1000
+)
+```
+
+
+## Pre-Compile Model
+
+```{r stan-compile}
+# Define model name
+model_name <- "itm_simulation"
+
+# Compile model
+stan_model <-
+  cmdstanr::cmdstan_model(
+    stan_file = here("src", "models", paste0(model_name, ".stan")),
+    pedantic = TRUE,
+    quiet = FALSE
+  )
+sim_pars$model <- stan_model
+```
+
+
+## Simulating Data
+We take a somewhat unconventional approach to simulating data here. We first generate the data outside of the `SimDesign` design and then pass each data set within the generate function. This makes it somewhat easier to perform the cross-fitting (fitting the model and dgp link functions on the same data set) later on. 
+
+
+```{r generate-data-list}
+sim_data_ilr <- list()
+sim_data_sb <- list()
+for (i in 1:n_rep) {
+  sim_data_ilr[[i]] <- generate_itm_data_sim_study(
+    n_respondents = n_respondents,
+    n_items = n_items,
+    link = "ilr"
+  )
+  sim_data_sb[[i]] <- generate_itm_data_sim_study(
+    n_respondents = n_respondents,
+    n_items = n_items,
+    link = "sb"
+  )
+}
+# Save in fixed objects
+sim_data <- list(ilr = sim_data_ilr, sb = sim_data_sb)
+sim_pars$data <- sim_data
+
+```
+
+
+```{r sim-generate}
+sim_generate <- function(condition, fixed_objects = NULL){
+  
+  #- Preparation
+  # obtain fixed params
+  SimDesign::Attach(fixed_objects)
+  
+  # get current replication number
+  i <- as.numeric(condition$REPLICATION)
+  
+  # get link fn 
+  l_dgp <- condition$link_dgp 
+  #- Pass data based on condition
+  sim_data <-  fixed_objects$data[[l_dgp]][[i]]
+  
+  return(sim_data)
+}
+```
+
+
+
+# Analysis
+
+```{r sim-analyze}
+sim_analyze <- function(condition, dat, fixed_objects = NULL){
+  
+  #- Preparation
+  # obtain fixed params
+  SimDesign::Attach(fixed_objects)
+  
+  # to save space, data are attached anyway
+  fixed_objects$data <- NULL
+  
+  responses <- dat$responses
+  true_parameters <- dat$parameters
+  
+  #- Stan Data
+  # Stan data declaration
+  I = length(unique(responses$ii))
+  J = length(unique(responses$jj))
+  N  = nrow(responses)
+  ii = responses$ii
+  jj = responses$jj
+  nn = c(1:N)
+  Y_splx = cbind(responses$x_splx_1,
+                 responses$x_splx_2,
+                 responses$x_splx_3) %>%
+    as.matrix()
+  
+  
+  # Stan data list
+  stan_data <- list(
+    I = I,
+    J = J,
+    N = N,
+    ii = ii,
+    jj = jj,
+    nn = nn,
+    Y_splx = Y_splx,
+    link = ifelse(condition$link_model == "ilr", 1, 2)
+  )
+  
+  #- Fit model
+  # Run sampler
+  fit <- fixed_objects$model$sample(
+    data = stan_data,
+    chains = n_chains,
+    cores = 1,
+    iter_warmup = iter_warmup,
+    iter_sampling = iter_sampling,
+    refresh = 100,
+    thin = 1,
+    adapt_delta = .9,
+    init = .1
+)
+  
+  # Summary
+  pars_names <- 
+    c(
+      "Tr_loc",
+      "Tr_wid",
+      "a_loc",
+      "b_loc",
+      "b_wid",
+      "lambda_loc",
+      "lambda_wid",
+      "E_loc",
+      "E_wid",
+      "omega"
+      #"mu_I",
+      #"sigma_I",
+      #"mu_J",
+      #"sigma_J",
+    )
+  
+  fit_summary <- fit$summary()
+  
+  # Sampler Diagnostics
+  # TODO maybe only select specific parameters here
+  sampler_summary <- fit$sampler_diagnostics(format = "df") %>%
+    psych::describe(quant = c(.05, .95)) %>%
+    round(2) %>%
+    as.data.frame() %>%
+    # calculate sum, is relevant for total sum of divergent transitions
+    dplyr::mutate(sum = mean * n) %>% 
+    dplyr::select(mean, median, min, Q0.05, Q0.95, max, sum, n) 
+    
+  
+  # Convergence
+  convergence_summary <-
+    fit$draws(format = "df", variables = pars_names) %>%
+    posterior::summarise_draws(.x = ., "rhat", "ess_bulk", "ess_tail") %>%
+    remove_missing() %>%
+    dplyr::select(-variable)
+ 
+  
+  ### Compute simple means of logit transformed values for comparison with ITM
+  # compute means in the unbounded space
+  simple_means <-
+    cbind(jj, simplex_to_bvn(Y_splx, type = condition$link_model)) %>%
+    as.data.frame() %>%
+    dplyr::group_by(jj) %>%
+    dplyr::summarise(across(everything(), mean, na.rm = TRUE)) %>%
+    dplyr::ungroup() %>%
+    dplyr::select(-jj) %>% 
+    rename(simplemean_loc = x_bvn_1, simplemean_wid = x_bvn_2)
+  
+  
+  ### Return list
+  return(
+    ret = list(
+      fit_summary = fit_summary,
+      sampler_summary = sampler_summary,
+      convergence_summary = convergence_summary,
+      true_parameters = true_parameters,
+      simple_means = simple_means
+    )
+  )
+}
+```
+
+
+
+# Summarize
+
+```{r sim-summarize}
+sim_summarize <- function(condition, results, fixed_objects = NULL){
+  
+  #- Preparation
+  # obtain fixed params
+  SimDesign::Attach(fixed_objects)
+  
+  # Prepare output
+  ret <- list()
+  
+  # Function for point estimate comparison
+  # Method can either be "model" for the ITM model or "simple" for the simple means
+  point_comparison <- function(results = results,
+                               method = "model",
+                               estimate_name,
+                               truth_name,
+                               summary,
+                               pm) {
+    tmp_summary <- sapply(results, function(x) {
+    if(method == "model") {  
+      x$fit_summary %>%
+        dplyr::filter(stringr::str_detect(variable,
+            # ensure that it is at the beginning of the string
+            # to avoid issues with a_loc and lambda_loc
+            paste0("^", estimate_name))) %>%
+        dplyr::select(all_of({{summary}}))
+    } else if(method == "simple") {
+      x$simple_means %>%
+        dplyr::select(all_of({{estimate_name}}))
+    }})
+    # compare against true parameters
+    ret <- list()
+    for(i in 1:length(tmp_summary)){
+      ret[[i]] <- pm(tmp_summary[[i]], results[[i]]$true_parameters[[truth_name]])
+    }
+    return(ret)
+    }
+  
+  # For bias of point estimates
+  fn_abs_bias <- function(est_param,
+                          true_param,
+                          average = TRUE) {
+    if (isTRUE(average)) {
+      mean(abs(est_param - true_param), na.rm = TRUE)
+    } else {
+      abs(est_param - true_param)
+    }
+  }
+  fn_rel_bias <- function(est_param,
+                          true_param,
+                          average = TRUE) {
+    if (isTRUE(average)) {
+      mean(abs(est_param - true_param) / abs(true_param), na.rm = TRUE)
+    } else {
+      abs(est_param - true_param) / abs(true_param)
+    }
+  }
+  
+  fn_mse <- function(est_param, 
+                     true_param, 
+                     average = TRUE) {
+    if (isTRUE(average)) {
+      mean((est_param - true_param) ^ 2, na.rm = TRUE)
+    } else {
+      mean((est_param - true_param) ^ 2, na.rm = TRUE)
+    }
+    
+  }
+  
+  
+  fn_rmse <- function(est_param, 
+                      true_param, 
+                      average = TRUE) {
+    if (isTRUE(average)) {
+      mean(sqrt((est_param - true_param) ^ 2), na.rm = TRUE)
+    } else {
+      sqrt((est_param - true_param) ^ 2)
+    }
+  }
+  
+  # create a function that estimates bootstrap mcse given a vector input
+  # and a function to calculate the statistic
+  bootstrap_mcse <- function(data, n_boot){
+    bootstrap_res <- vector("numeric", n_boot)
+    for(i in 1:n_boot){
+      ind <- sample(1:n_boot, replace = TRUE)
+      bootstrap_res[i] <- mean(data[ind], na.rm = TRUE)
+    }
+      sd(bootstrap_res, na.rm = TRUE)
+  }
+  
+  
+  #- All individual PMs
+  # Estimate names
+  est_names <-
+    c(
+      "E_loc",
+      "E_wid",
+      "a_loc",
+      "b_loc",
+      "b_wid",
+      "lambda_loc",
+      "lambda_wid",
+      "Tr_loc",
+      "Tr_wid"
+    )
+  
+  
+  # Create a grid of relevant computations
+  performance_grid <- expand.grid(
+    estimate_name = est_names,
+    summary = c("median", "mean"),
+    pm = c(
+      "fn_abs_bias", 
+      "fn_rel_bias",
+      "fn_mse" 
+      # "fn_rmse"    --> redudant with absolute bias
+      ),
+    stringsAsFactors = FALSE
+  )
+  
+  performance_grid$truth_name <- performance_grid$estimate_name
+  
+  
+  # Apply function for each row, using the columns of the grid
+  # as input arguments
+  performance_results <- performance_grid %>%
+    mutate(raw = purrr::pmap(., function(estimate_name, method, truth_name, summary, pm) {
+      point_comparison(
+        results = results,
+        estimate_name = estimate_name,
+        method = "model",
+        truth_name = truth_name,
+        summary = summary,
+        pm = get(pm)  # evaluate as function
+      )
+    }))
+  
+  # Evaluate simple means
+  performance_results <- performance_results |> 
+    tibble::add_row(
+      estimate_name = "simplemean_loc",
+      summary = "mean",
+      pm = "fn_abs_bias",
+      truth_name = "Tr_loc",
+      raw = list(point_comparison(results, 
+                             estimate_name = "simplemean_loc", 
+                             method = "simple",
+                             truth_name = "Tr_loc", 
+                             summary = "mean", 
+                             pm = fn_abs_bias)
+    )) |> 
+    tibble::add_row(
+      estimate_name = "simplemean_wid",
+      summary = "mean",
+      pm = "fn_abs_bias",
+      truth_name = "Tr_wid",
+      raw = list(point_comparison(results, 
+                             estimate_name = "simplemean_wid", 
+                             method = "simple",
+                             truth_name = "Tr_wid", 
+                             summary = "mean", 
+                             pm = fn_abs_bias)
+    )) |> 
+    tibble::add_row(
+      estimate_name = "simplemean_loc",
+      summary = "mean",
+      pm = "fn_rel_bias",
+      truth_name = "Tr_loc",
+      raw = list(point_comparison(results, 
+                             estimate_name = "simplemean_loc", 
+                             method = "simple",
+                             truth_name = "Tr_loc", 
+                             summary = "mean", 
+                             pm = fn_rel_bias)
+    )) |> 
+    tibble::add_row(
+      estimate_name = "simplemean_wid",
+      summary = "mean",
+      pm = "fn_rel_bias",
+      truth_name = "Tr_wid",
+      raw = list(point_comparison(results, 
+                             estimate_name = "simplemean_wid", 
+                             method = "simple",
+                             truth_name = "Tr_wid", 
+                             summary = "mean", 
+                             pm = fn_rel_bias)
+    ))
+  
+  
+  #- Combined Bias and RMSE of T_loc and T_wid 
+  # Goal: evaluate the absolute bias for the combination of loc and wid
+  # and the RMSE for the combination of loc and wid
+  # method can be either "model" or "simple" 
+  interval_comparison <- function(results = results,
+                                  method = "model",
+                                 summary,
+                                 pm,
+                                 average = FALSE,
+                                 ...) {
+    loc_summary <- sapply(results, function(x) {
+      
+      if(method == "model") {
+        x$fit_summary %>%
+          dplyr::filter(stringr::str_detect(variable,
+              "Tr_loc")) %>%
+          dplyr::select(all_of({{summary}}))
+      } else if(method == "simple") {
+        x$simple_means %>%
+          dplyr::select(all_of(contains("simplemean_loc")))
+      }
+    })
+    wid_summary <- sapply(results, function(x) {
+      if(method == "model") {
+        x$fit_summary %>%
+          dplyr::filter(stringr::str_detect(variable,
+              "Tr_wid")) %>%
+          dplyr::select(all_of({{summary}}))
+      } else if(method == "simple") {
+        x$simple_means %>%
+          dplyr::select(all_of(contains("simplemean_wid")))
+      }
+    })
+    
+    # compare against true parameters
+    ret <- list()
+    for(i in 1:length(loc_summary)){
+      loc_res <- pm(loc_summary[[i]], 
+                     results[[i]]$true_parameters[["Tr_loc"]],
+                     ...)
+      wid_res <- pm(wid_summary[[i]],
+                     results[[i]]$true_parameters[["Tr_wid"]],
+                     ...)
+      if(isTRUE(average)){
+        ret[[i]] <- mean(loc_res + wid_res)
+      }
+      else{
+        ret[[i]] <- loc_res + wid_res
+      }
+    
+    }
+    return(ret)
+  }
+  
+  # add performance results for the truth interval
+  # RMSE and ABS Bias are redundant here anyway
+  performance_results_int <- performance_results %>%
+    tibble::add_row(
+      estimate_name = "Tr_interval",
+      summary = "median",
+      pm = "fn_abs_bias",
+      truth_name = "Tr_interval",
+      raw = list(
+        interval_comparison(
+          results = results,
+          summary = "median",
+          pm = fn_abs_bias,
+          average = FALSE
+        )
+      )
+    ) |>  
+    tibble::add_row(
+      estimate_name = "Tr_interval",
+      summary = "mean",
+      pm = "fn_abs_bias",
+      truth_name = "Tr_interval",
+      raw = list(
+        interval_comparison(
+          results = results,
+          summary = "mean",
+          pm = fn_abs_bias,
+          average = FALSE
+        )
+      )
+    ) |> 
+    tibble::add_row(
+      estimate_name = "Tr_interval",
+      summary = "median",
+      pm = "fn_rel_bias",
+      truth_name = "Tr_interval",
+      raw = list(
+        interval_comparison(
+          results = results,
+          summary = "median",
+          pm = fn_rel_bias,
+          average = FALSE
+        )
+      )
+    ) |>
+    tibble::add_row(
+      estimate_name = "Tr_interval",
+      summary = "mean",
+      pm = "fn_rel_bias",
+      truth_name = "Tr_interval",
+      raw = list(
+        interval_comparison(
+          results = results,
+          summary = "mean",
+          pm = fn_rel_bias,
+          average = FALSE
+        )
+      )
+    ) |>
+    # add simple means intervals
+    tibble::add_row(
+      estimate_name = "simplemean_interval",
+      summary = "mean",
+      pm = "fn_abs_bias",
+      truth_name = "Tr_interval",
+      raw = list(
+        interval_comparison(
+          results = results,
+          method = "simple",
+          summary = "mean",
+          pm = fn_abs_bias,
+          average = FALSE
+        )
+      ))
+  
+  
+  #- Overall summaries
+  # calculate mean and mcse for each performance measure
+  # based on the list input in "raw"
+  performance_results_int <- performance_results_int %>%
+    mutate(
+      mean = purrr::map_dbl(raw, function(x) mean(unlist(x), na.rm = TRUE)),
+      sd = purrr::map_dbl(raw, function(x) sd(unlist(x), na.rm = TRUE)),
+      mcse = purrr::map_dbl(raw, function(x) bootstrap_mcse(unlist(x), 1000))
+    )
+  
+  # Assuming performance_results is your dataframe
+  df_pms <- performance_results_int %>%
+    select(!c(truth_name, raw)) %>% 
+    # gather the numerical columns into a key-value pair
+    gather(key = "stat", value = "value", mean, sd, mcse) %>%
+    # unite the name columns and the key to form the new names
+    unite("new_name", estimate_name, summary, pm, stat, sep = "_") %>%
+    # spread the new names and values into a named vector
+    spread(key = "new_name", value = "value")
+
+  # convert the dataframe to a named vector
+  named_pms <- unlist(df_pms)
+  
+  
+  
+  
+  
+  #- Convergence Diagnostics
+  #-- Rhat and ESS
+  # Extract convergence diagnostics
+  
+  # these helpers are a bit stupid make the summarise call easier
+  prop100 <- function(x){sum(x > 100, na.rm = TRUE)}
+  prop200 <- function(x){sum(x > 200, na.rm = TRUE)}
+  prop300 <- function(x){sum(x > 300, na.rm = TRUE)}
+  
+  prop1c1 <- function(x){sum(x < 1.1, na.rm = TRUE)}
+  prop1c05 <- function(x){sum(x < 1.05, na.rm = TRUE)}
+  prop1c01 <- function(x){sum(x < 1.01, na.rm = TRUE)}
+  
+  conv_tmp <- as.data.frame(t(sapply(results, function(x) {
+    x$convergence_summary %>%
+      dplyr::summarise(across(c(rhat), list(mean = mean,
+                                            prop1c1 = prop1c1,
+                                            prop1c05 = prop1c05,
+                                            prop1c01 = prop1c01)),
+                       across(c(ess_bulk, ess_tail), list(mean = mean,
+                                                          prop100 = prop100,
+                                                          prop200 = prop200,
+                                                          prop300 = prop300)))
+      
+  }))) %>% 
+    dplyr::mutate(across(everything(), as.numeric))
+  
+  # Calculate mean and mcse for each convergence measure
+  ret$mean_conv <- colMeans(conv_tmp)
+  names(ret$mean_conv) <- paste0(colnames(conv_tmp), "_mean")
+  ret$mcse_conv <- apply(conv_tmp, 2, function(x) sd(x, na.rm = TRUE) / sqrt(length(x)))
+  names(ret$mcse_conv) <- paste0(colnames(conv_tmp), "_mcse")
+  
+  #-- Divergent transitions
+  # Extract divergent transitions
+  div_tmp <- sapply(results, function(x) {
+    x$sampler_summary %>%
+      tibble::rownames_to_column(var = "stat") %>%
+      dplyr::filter(stat == "divergent__") %>%
+      dplyr::pull("sum")
+  })
+  ret$mean_divtrans <- mean(div_tmp)
+  names(ret$mean_divtrans) <- "divergent_transitions_mean"
+  ret$mcse_divtrans <- sd(div_tmp) / sqrt(length(div_tmp))
+  names(ret$mcse_divtrans) <- "divergent_transitions_mcse"
+  
+  
+  #- Return
+  ret_vec <- unlist(ret, use.names = TRUE)
+  ret_vec <- c(ret_vec, named_pms)
+  
+  return(ret_vec)
+  
+}
+```
+
+
+# Run Simulation
+
+```{r sim-run}
+# Simulation Parameters
+sim_pars$n_chains <- 4
+sim_pars$iter_warmup <- 500
+sim_pars$iter_sampling <- 1000
+n_cores <- parallel::detectCores() - 1
+
+# For Testing
+#n_rep <- 10
+
+# Run Simulation
+sim_res <- SimDesign::runSimulation(
+  design = df_design,
+  replications = n_rep,
+  generate = sim_generate,
+  analyse = sim_analyze,
+  summarise = sim_summarize,
+  fixed_objects = sim_pars,
+  parallel = TRUE,
+  packages = packages,
+  save_results = FALSE,
+  # debug = "summarise",
+  ncores = n_cores,
+  max_errors = 2,
+  filename = "sim_res_link_function",
+  # to store replication number
+  control = list(include_replication_index = TRUE)
+)
+
+# create a folder for the results
+path <- here("sim_results",
+             paste0(
+               "sim_res_link_function_",
+               Sys.time() %>% format("%Y-%m-%d_%H-%M-%S")
+             ))
+
+dir.create(path)
+
+# Save results
+saveRDS(sim_res, here(path, "sim_res_link_function_safety.rds"))
+
+# save session info
+writeLines(capture.output(sessionInfo()),
+           here(path,"sim_res_link_function_sessionInfo.txt"))
+
+# move rds file
+file.rename(from = "sim_res_link_function.rds",
+            to = here(path, "sim_res_link_function.rds"))
+```
+
+```{r}
+SimClean()
+```
+
+
+
+# Write to .R-file
+
+To run this simulation study on a server, we need to write the code to an .R-file. 
+
+```{r}
+knitr::purl(here("src", "01_simulation_study_link_functions_final.Rmd"), 
+            output = here("src", "01_simulation_study_link_functions_final.R"),
+            documentation = 2)
+```
+
+

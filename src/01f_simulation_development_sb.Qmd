@@ -1,0 +1,1133 @@
+---
+title: "Interval Truth Model"
+subtitle: "Simulation Study: Development of Data Generating Process - Stick-Breaking Transformation"
+author: 
+ - name: Matthias Kloft
+   orcid: 0000-0003-1845-6957
+   affiliations: University of Marburg  
+ - name: Björn S. Siepe
+   orcid: 0000-0002-9558-4648
+   affiliations: University of Marburg
+ - name: Daniel W. Heck
+   orcid: 0000-0002-6302-9252
+   affiliations: University of Marburg
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-tools: true
+    code-summary: "Show the code"
+    fig-width: 7
+    fig-height: 4.5
+    embed-resources: true
+execute:
+  message: false
+  warning: false
+params: 
+  refit: false
+---
+
+```{r setup, include = FALSE}
+# Libraries
+packages <- c(
+  "tidyverse",
+  "yardstick",
+  "readxl",
+  "cmdstanr",
+  "bayesplot",
+  "posterior",
+  "bayestestR",
+  "rmarkdown",
+  "cowplot",
+  "svglite",
+  "psych",
+  "here",
+  "ggpubr"
+)
+# in case cmdstanr is not installed
+# install.packages("cmdstanr",
+#                  repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+
+if (!require("pacman"))
+  install.packages("pacman")
+pacman::p_load(packages, update = F, character.only = T)
+
+# default chunk options
+knitr::opts_chunk$set(
+  fig.height = 7,
+  fig.width = 10,
+  include = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+source(here("src", "00_functions.R"))
+set.seed(35032)
+```
+
+
+# Check simulation settings
+
+## Define Parameter Bounds for Variances
+```{r}
+# compute a benchmark for the mean and SD of the parameters
+mean_benchmark <- simplex_to_bvn(c(.425, .15, .425), type = "sb")
+sd_benchmark_loc <- simplex_to_bvn(c(.98, .01, .01), type = "sb")
+sd_benchmark_wid <- simplex_to_bvn(c(.495, .01, .495), type = "sb")
+# mean for Tr_loc
+mu_Tr_loc <- mean_benchmark[1]
+mu_Tr_loc %>% round(2)
+# mean for Tr_wid
+mu_Tr_wid <- mean_benchmark[2]
+mu_Tr_wid %>% round(2)
+# SD forTr_loc
+sigma_Tr_loc <- sd_benchmark_loc[1] / 4
+sigma_Tr_loc %>% round(2)
+# SD Tr_wid
+sigma_Tr_wid <- abs(sd_benchmark_wid[2] - mean_benchmark[2]) / 4
+sigma_Tr_wid %>% round(2)
+
+# SDs for other parameters
+sigma_lambda_E_loc <- .3
+sigma_lambda_E_loc %>% round(2)
+sigma_lambda_E_wid <- .3
+sigma_lambda_E_wid %>% round(2)
+sigma_a_loc <- .3
+sigma_b_loc <- sigma_Tr_loc / 3
+sigma_b_loc %>% round(2)
+sigma_b_wid <- sigma_Tr_wid / 3
+sigma_b_wid %>% round(2)
+
+# sigma_lambda_E_loc <- sigma_Tr_loc / 3
+# sigma_lambda_E_loc
+# sigma_lambda_E_wid <- sigma_Tr_wid / 3
+# sigma_lambda_E_wid
+# sigma_a_loc <- sigma_Tr_loc / 3
+# sigma_b_loc <- sigma_Tr_loc / 3
+# sigma_b_loc
+# sigma_b_wid <- sigma_Tr_wid / 3
+# sigma_b_wid
+```
+
+## Simulate 100 Datasets
+```{r}
+sim_data_list <- map(1:100, ~ {
+  generate_itm_data_sim_study(
+    n_respondents = 50,
+    n_items = 50,
+    link = "sb",
+    mu_Tr_loc = mu_Tr_loc,
+    mu_Tr_wid = mu_Tr_wid,
+    sigma_Tr_loc = sigma_Tr_loc,
+    sigma_Tr_wid = sigma_Tr_wid,
+    sigma_lambda_E_loc = sigma_lambda_E_loc,
+    sigma_lambda_E_wid = sigma_lambda_E_wid,
+    sigma_a_loc = sigma_a_loc,
+    sigma_b_loc = sigma_b_loc,
+    sigma_b_wid = sigma_b_wid
+  )
+})
+```
+
+## Plots
+### True Intervals
+```{r}
+true_intervals <- 
+  map_dfr(sim_data_list, 
+         .f = ~.x$parameters[c("Tr_L", "Tr_U")] %>%
+          do.call(cbind.data.frame,.)) %>%
+  mutate(Tr_loc = Tr_L + (Tr_U - Tr_L) / 2,
+         Tr_wid = Tr_U - Tr_L)
+
+true_intervals %>%
+  ggplot() +
+  geom_abline(intercept = 0, slope = 2) +
+  geom_abline(intercept = 2, slope = -2) +
+  geom_point(
+    aes(x = Tr_loc, y = Tr_wid),
+    size = 1.5,
+    alpha = .1,
+    shape = 16
+  )+
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+    scale_y_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  theme_pubr(base_size = 14)
+```
+
+```{r}
+samples <- gather_values(
+  lower = true_intervals$Tr_L,
+  upper = true_intervals$Tr_U,
+  item_id = 1:nrow(true_intervals),
+  step_size = 0.01
+)
+samples %>%
+  ggplot(aes(x = samples)) +
+  geom_density(fill = "purple", alpha = .5) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  theme_pubr(base_size = 14) +
+  theme(plot.margin = margin(.1, .5, .1, .1, "cm"),
+        panel.grid.major = element_line())
+```
+
+### Response Data
+```{r}
+responses <- map_dfr(sim_data_list, ~ .x$responses) %>%
+  mutate(X_loc = x_L + (x_U - x_L) / 2, 
+         X_wid = x_U - x_L)
+
+samples <- gather_values(
+  lower = responses$x_L,
+  upper = responses$x_U,
+  item_id = responses$jj,
+  step_size = 0.01
+)
+
+# density plot
+samples %>% 
+  ggplot(aes(x = samples)) +
+  geom_density(fill = "purple", alpha = .5) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  theme_pubr(base_size = 14) +
+  theme(plot.margin = margin(.1, .5, .1, .1, "cm"),
+        panel.grid.major = element_line())
+```
+
+```{r}
+responses %>%
+  ggplot() +
+  geom_abline(intercept = 0, slope = 2) +
+  geom_abline(intercept = 2, slope = -2) +
+  geom_point(
+    aes(x = X_loc, y = X_wid),
+    size = .05,
+    alpha = .1,
+    shape = 16
+  ) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  theme_pubr(base_size = 14)
+
+ggsave(here("plots", "response_data_sb_fixed.pdf"))
+```
+
+### Item Parameters
+```{r}
+map_dfr(sim_data_list, 
+        ~ .x$parameters["lambda_loc"] %>%
+          data.frame()) %>%
+  ggplot() +
+  geom_histogram(
+    aes(x = 1/lambda_loc),binwidth = .02, fill = "purple", alpha = .7
+  )+
+  scale_x_continuous(
+    expand = expansion()
+  ) +
+    scale_y_continuous(
+    expand = expansion()
+  ) +
+  theme_pubr(base_size = 14) 
+```
+
+```{r}
+map_dfr(sim_data_list, 
+        ~ .x$parameters["lambda_wid"] %>%
+          data.frame()) %>%
+  ggplot() +
+  geom_histogram(
+    aes(x = 1/lambda_wid),binwidth = .02, fill = "purple", alpha = .7
+  )+
+  scale_x_continuous(
+    expand = expansion()
+  ) +
+    scale_y_continuous(
+    expand = expansion()
+  ) +
+  theme_pubr(base_size = 14)
+```
+
+
+### Person Parameters
+```{r}
+map_dfr(sim_data_list, 
+        ~ .x$parameters["E_loc"] %>%
+          data.frame()) %>%
+  ggplot() +
+  geom_histogram(
+    aes(x = 1/E_loc),binwidth = .02, fill = "purple", alpha = .7
+  )+
+  scale_x_continuous(
+    expand = expansion()
+  ) +
+    scale_y_continuous(
+    expand = expansion()
+  ) +
+  theme_pubr(base_size = 14) 
+```
+
+```{r}
+map_dfr(sim_data_list, 
+        ~ .x$parameters["E_wid"] %>%
+          data.frame()) %>%
+  ggplot() +
+  geom_histogram(
+    aes(x = 1/E_wid),binwidth = .02, fill = "purple", alpha = .7
+  )+
+  scale_x_continuous(
+    expand = expansion()
+  ) +
+    scale_y_continuous(
+    expand = expansion()
+  ) +
+  theme_pubr(base_size = 14) 
+```
+
+```{r}
+map_dfr(sim_data_list, 
+        ~ .x$parameters["a_loc"] %>%
+          data.frame()) %>%
+  ggplot() +
+  geom_histogram(
+    aes(x = a_loc),binwidth = .02, fill = "purple", alpha = .7
+  )+
+  scale_x_continuous(
+    expand = expansion()
+  ) +
+    scale_y_continuous(
+    expand = expansion()
+  ) +
+  theme_pubr(base_size = 14) 
+```
+
+```{r}
+map_dfr(sim_data_list, 
+        ~ .x$parameters["b_loc"] %>%
+          data.frame()) %>%
+  ggplot() +
+  geom_histogram(
+    aes(x = b_loc),binwidth = .02, fill = "purple", alpha = .7
+  )+
+  scale_x_continuous(
+    expand = expansion()
+  ) +
+    scale_y_continuous(
+    expand = expansion()
+  ) +
+  theme_pubr(base_size = 14) 
+```
+
+```{r}
+map_dfr(sim_data_list, 
+        ~ .x$parameters["b_wid"] %>%
+          data.frame()) %>%
+  ggplot() +
+  geom_histogram(
+    aes(x = b_wid),binwidth = .02, fill = "purple", alpha = .7
+  )+
+  scale_x_continuous(
+    expand = expansion()
+  ) +
+    scale_y_continuous(
+    expand = expansion()
+  ) +
+    theme_pubr(base_size = 14) 
+```
+
+***
+
+# Generate Data for One Replication
+```{r}
+n_respondents <- 50
+n_items <- 50
+
+sim_data <-
+  generate_itm_data_sim_study(
+    n_respondents = n_respondents,
+    n_items = n_items,
+    link = "sb",
+    mu_Tr_loc = mu_Tr_loc,
+    mu_Tr_wid = mu_Tr_wid,
+    sigma_Tr_loc = sigma_Tr_loc,
+    sigma_Tr_wid = sigma_Tr_wid,
+    sigma_lambda_E_loc = sigma_lambda_E_loc,
+    sigma_lambda_E_wid = sigma_lambda_E_wid,
+    sigma_a_loc = sigma_a_loc,
+    sigma_b_loc = sigma_b_loc,
+    sigma_b_wid = sigma_b_wid
+  )
+responses <- sim_data$responses
+```
+
+## Plot Data
+```{r} 
+samples <- gather_values(
+  lower = responses$x_L,
+  upper = responses$x_U,
+  item_id = responses$jj,
+  step_size = 0.01
+)
+samples %>% 
+  ggplot(aes(x = samples)) +
+  geom_density(fill = "purple", alpha = .5) +
+  facet_wrap(~item_id) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  theme_pubr(base_size = 14) +
+  theme(plot.margin = margin(.1, .5, .1, .1, "cm"),
+        panel.grid.major = element_line())
+
+```
+
+## Plot True Intervals as Densities
+```{r}
+gather_values(
+  lower = sim_data$parameters$Tr_L,
+  upper = sim_data$parameters$Tr_U,
+  item_id = 1,
+  step_size = 0.01
+) %>% 
+  ggplot(aes(x = samples)) +
+  geom_density(fill = "purple", alpha = .5) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  theme_pubr(base_size = 14) +
+  theme(plot.margin = margin(.1, .5, .1, .1, "cm"),
+        panel.grid.major = element_line())
+```
+
+## Plot True Intervals as Error Bars
+```{r}
+data.frame(
+  idx = 1:n_items,
+  lower = sim_data$parameters$Tr_L,
+  upper = sim_data$parameters$Tr_U
+) %>%
+  ggplot(aes(y = idx)) +
+  geom_errorbarh(aes(xmin = lower, xmax = upper), height = 0.3) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = seq(0, 1, .25),
+    expand = expansion()
+  ) +
+  labs(x = "Latent Truth",
+       y = "Item") +
+  theme_pubr(base_size = 14) +
+  theme(plot.margin = margin(.1, .5, .1, .1, "cm"),
+        panel.grid.major = element_line())
+```
+
+## Plot True Intervals as Ternary Plot
+```{r}
+data.frame(
+  idx = 1:n_items,
+  Tr_L = sim_data$parameters$Tr_L,
+  Tr_U = sim_data$parameters$Tr_U) %>% 
+  mutate(
+  Tr_loc = Tr_L + (Tr_U - Tr_L) / 2,
+  Tr_wid = Tr_U - Tr_L
+) %>%
+  ggplot() +
+  geom_abline(intercept = 0, slope = 2) +
+  geom_abline(intercept = 2, slope = -2) +
+  geom_point(
+    aes(x = Tr_loc, y = Tr_wid),
+    size = 4,
+    alpha = .5,
+    shape = 16
+  )+
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+    scale_y_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  theme_pubr(base_size = 14)
+```
+
+***
+
+# Fit Model With "SB"-Link Function
+
+## Stan Data
+```{r}
+### Stan data declaration
+I <- length(unique(responses$ii))
+J <- length(unique(responses$jj))
+N <- nrow(responses)
+ii <- responses$ii
+jj <- responses$jj
+nn <- c(1:N)
+Y_splx <- cbind(responses$x_splx_1, responses$x_splx_2, responses$x_splx_3) %>%
+  as.matrix()
+
+Y_splx[is.na(Y_splx)]
+
+# sanity check: all rows sum to 1
+# check <- apply(Y_splx, 1, sum) %>% as.data.frame()
+# table(check)
+
+## stan data list
+stan_data_sb <- list(
+  I = I,
+  J = J,
+  N = N,
+  ii = ii,
+  jj = jj,
+  nn = nn,
+  Y_splx = Y_splx,
+  link = 2 # sb
+)
+```
+
+## Compile Model
+```{r}
+# Choose model to fit
+model_name <- "itm_simulation"
+# Compile model
+model <-
+  cmdstanr::cmdstan_model(
+    stan_file = here("src", "models", paste0(model_name, ".stan")),
+    pedantic = TRUE,
+    quiet = FALSE
+  )
+```
+
+## Run Sampler
+```{r eval=FALSE}
+#| eval: !expr params$refit
+
+
+# number of MCMC chains
+n_chains <- 4
+# Run sampler
+fit_sb <- model$sample(
+  data = stan_data_sb,
+  seed = 2023,
+  chains = n_chains,
+  parallel_chains = n_chains,
+  iter_warmup = 500,
+  iter_sampling = 1000,
+  refresh = 500,
+  thin = 1,
+  adapt_delta = .9,
+  init = .1
+)
+# save fit
+fit_sb$save_object(file =  here("fits", paste0(model_name, "_fit_sb.RDS")))
+```
+
+```{r}
+# load  fit
+fit_sb <- readRDS(file =  here("fits", paste0(model_name, "_fit_sb.RDS")))
+```
+
+***
+
+### Get Estimates
+```{r}
+estimates_summary <- fit_sb$summary()
+```
+
+### Sampler Diagnostics
+```{r}
+# sampler diagnostics
+fit_sb$sampler_diagnostics(format = "df") %>% 
+  psych::describe(quant = c(.05,.95),) %>%
+  round(2) %>%  
+  as.data.frame() %>% 
+  dplyr::select(median, min, Q0.05, Q0.95,  max) %>% 
+  .[-c(7:9),]
+```
+
+```{r}
+# convergence diagnostics
+convergence_summary <- 
+  fit_sb$draws(format = "df") %>%
+  summarise_draws(.x = ., "rhat", "ess_bulk", "ess_tail") %>%
+  remove_missing() %>%
+  select(-variable) %>%
+  psych::describe(., quant = c(.05, .95)) %>%
+  as.data.frame() %>%
+  select(median, Q0.05, Q0.95, min, max)
+
+convergence_summary %>% round(3)
+```
+
+### Effective sample size (ESS) & Rhat Plots
+```{r message=FALSE, warning=FALSE}
+# color scheme
+color_scheme_set(scheme = "purple")
+
+# Effective sample sizes
+plot_neff <-
+  mcmc_neff_hist(bayesplot::neff_ratio(fit_sb), binwidth = .01) +
+  labs(title = "A") +
+  guides(color = FALSE, fill = FALSE) +
+  theme(
+    legend.text = element_blank(),
+    legend.key = element_blank(),
+    title = element_text(size = 16, face = "bold")
+  )
+# Rhat
+plot_rhat <-
+  bayesplot::mcmc_rhat_hist(bayesplot::rhat(fit_sb)) +
+  labs(title = "B") +
+  guides(color = FALSE, fill = FALSE) +
+  theme(
+    legend.text = element_blank(),
+    legend.key = element_blank(),
+    title = element_text(size = 16, face = "bold")
+  ) +
+  yaxis_text(on = TRUE)
+
+# Combined plot
+plot_diagnostics <- gridExtra::grid.arrange(plot_neff, plot_rhat, ncol = 2)
+```
+
+## Parameter Plots
+```{r}
+# color scheme
+color_scheme_set(scheme = "purple")
+
+true_parameters <- sim_data$parameters
+```
+
+### Person Competence: Location
+```{r }
+plot_E_loc <-
+  mcmc_recover_scatter(x = fit_sb$draws("E_loc"), true = true_parameters$E_loc) +
+  labs(
+    subtitle = "Person Competence: Location",
+  ) 
+plot_E_loc
+```
+
+### Person Competence: Width
+```{r }
+plot_E_wid <-
+  mcmc_recover_scatter(x = fit_sb$draws("E_wid"), true = true_parameters$E_wid) +
+  labs(subtitle = "Person Competence: Width")
+plot_E_wid
+```
+
+### Person Scaling Bias: Location
+```{r }
+plot_a_loc <-
+  mcmc_recover_scatter(x = fit_sb$draws("a_loc"), true = true_parameters$a_loc) +
+  labs(subtitle = "Person Scaling Bias: Location")
+plot_a_loc
+```
+
+### Person Shifting Bias: Location
+```{r }
+plot_b_loc <-
+  mcmc_recover_scatter(x = fit_sb$draws("b_loc"), true = true_parameters$b_loc) +
+  labs(subtitle = "Person Shifting Bias: Location") 
+plot_b_loc
+```
+
+### Person Shifting Bias: Width
+```{r }
+plot_b_wid <-
+  mcmc_recover_scatter(x = fit_sb$draws("b_wid"), true = true_parameters$b_wid) +
+  labs(subtitle = "Person Shifting Bias: Width")
+plot_b_wid
+```
+
+### Item Discernability: Location
+```{r }
+plot_lambda_loc <-
+  mcmc_recover_scatter(x = fit_sb$draws("lambda_loc"),
+                       true = true_parameters$lambda_loc)
+plot_lambda_loc
+```
+
+### Item Discernability: Width
+```{r }
+# plot
+plot_lambda_wid <-
+  mcmc_recover_scatter(x = fit_sb$draws("lambda_wid"),
+                       true = true_parameters$lambda_wid) +
+  labs(subtitle = "Item Discernability: Width")
+plot_lambda_wid
+```
+
+### Latent Truth Intervals
+```{r }
+# plot
+plot_Tr_loc <-
+  mcmc_recover_scatter(x = fit_sb$draws("Tr_loc"),
+                       true = true_parameters$Tr_loc)
+plot_Tr_loc
+```
+
+```{r }
+# plot
+plot_Tr_wid <-
+  mcmc_recover_scatter(x = fit_sb$draws("Tr_wid"),
+                       true = true_parameters$Tr_wid) +
+  labs(subtitle = "Item True Width")
+
+plot_Tr_wid
+```
+
+```{r}
+# ITM estimates
+latent_truth_est_sb <- data.frame(
+  idx = 1:J,
+  type = "estimated",
+  Tr_L_est = fit_sb$summary("Tr_splx") %>% 
+    as.data.frame() %>% 
+    pull(median) %>% 
+    .[1:J],
+  Tr_wid_est = fit_sb$summary("Tr_splx") %>% 
+    as.data.frame() %>% 
+    pull(median) %>% 
+    .[(J + 1):(J * 2)]
+) %>%
+  mutate(Tr_loc_est = Tr_L_est + Tr_wid_est / 2, 
+         Tr_U_est = Tr_L_est + Tr_wid_est)
+
+# compute means in the unbounded space
+means_sb <-
+  cbind(jj, simplex_to_bvn(Y_splx, type = "sb")) %>%
+  as.data.frame() %>%
+  dplyr::group_by(jj) %>%
+  dplyr::summarise(across(everything(), mean, na.rm = TRUE)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-jj) %>%
+  bvn_to_simplex(type = "sb") %>%
+  mutate(
+    idx = 1:J,
+    type = "simple_mean",
+    Tr_L_sm = x_1,
+    Tr_U_sm = 1 - x_3
+  ) %>%
+  select(-c(x_1, x_2, x_3))
+
+
+# true parameters
+latent_truth_true <- data.frame(
+  idx = 1:J,
+  type = "true",
+  Tr_L_true = true_parameters$Tr_L,
+  Tr_U_true = true_parameters$Tr_U
+)
+
+df_interval_plot_sb <- full_join(latent_truth_est_sb, latent_truth_true) %>%
+  full_join(means_sb) %>% 
+  mutate(type = factor(type, levels = c("estimated", "true")))
+```
+
+#### Interval Plot
+```{r message=FALSE, warning=FALSE}
+cols <- c("True" = "grey70", "ITM"="red","Mean"="blue")
+
+df_interval_plot_sb %>%
+  ggplot(aes(y = idx)) +
+    geom_errorbarh(
+    aes(xmin = Tr_L_true, xmax = Tr_U_true, col = "True"), 
+    height = 0,
+    linewidth = 5,
+  ) +
+  geom_errorbarh(
+    aes(xmin = Tr_L_sm, xmax = Tr_U_sm, col = "Mean"),
+    height = 0,
+    linewidth = 3,
+    alpha = .4
+  ) +
+  geom_errorbarh(
+    aes(xmin = Tr_L_est, xmax = Tr_U_est, col = "ITM"),
+    height = 0,
+    linewidth = 2,
+    alpha = .5
+    ) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = seq(0, 1, .25),
+    expand = expansion()
+  ) +
+    scale_y_discrete(
+    expand = expansion(add = 1)
+  ) +
+scale_color_manual(values = cols) +
+  labs(x = "Latent Truth", y = "Item") +
+  theme_pubr(base_size = 14) +
+  theme(plot.margin = margin(.1, .5, .1, .1, "cm"),
+        panel.grid.major = element_line())
+```
+
+# cross-Fit Model With ILR-Logit Function
+
+## Stan Data
+```{r}
+stan_data_ilr <- list(
+  I = I,
+  J = J,
+  N = N,
+  ii = ii,
+  jj = jj,
+  nn = nn,
+  Y_splx = Y_splx,
+  link = 1 # ilr
+)
+```
+
+## Run Sampler
+```{r eval=FALSE}
+#| eval: !expr params$refit
+
+
+# number of MCMC chains
+n_chains <- 4
+# Run sampler
+fit_ilr <- model$sample(
+  data = stan_data_ilr,
+  seed = 2023,
+  chains = n_chains,
+  parallel_chains = n_chains,
+  iter_warmup = 500,
+  iter_sampling = 1000,
+  refresh = 500,
+  thin = 1,
+  adapt_delta = .9,
+  init = .1
+)
+# save fit
+fit_ilr$save_object(file =  here("fits", paste0(model_name, "_fit_ilr_cross.RDS")))
+```
+
+```{r}
+# load  fit_ilr
+fit_ilr <- readRDS(file =  here("fits", paste0(model_name, "_fit_ilr_cross.RDS")))
+```
+
+***
+
+### Get Estimates
+```{r}
+estimates_summary <- fit_ilr$summary()
+```
+
+### Sampler Diagnostics
+```{r}
+# sampler diagnostics
+fit_ilr$sampler_diagnostics(format = "df") %>% 
+  psych::describe(quant = c(.05,.95),) %>%
+  round(2) %>%  
+  as.data.frame() %>% 
+  dplyr::select(median, min, Q0.05, Q0.95,  max) %>% 
+  .[-c(7:9),]
+```
+
+```{r}
+# convergence diagnostics
+convergence_summary <- 
+  fit_ilr$draws(format = "df") %>%
+  summarise_draws(.x = ., "rhat", "ess_bulk", "ess_tail") %>%
+  remove_missing() %>%
+  select(-variable) %>%
+  psych::describe(., quant = c(.05, .95)) %>%
+  as.data.frame() %>%
+  select(median, Q0.05, Q0.95, min, max)
+
+convergence_summary %>% round(3)
+```
+
+### Effective sample size (ESS) & Rhat Plots
+```{r message=FALSE, warning=FALSE}
+# color scheme
+color_scheme_set(scheme = "purple")
+
+# Effective sample sizes
+plot_neff <-
+  mcmc_neff_hist(bayesplot::neff_ratio(fit_ilr), binwidth = .01) +
+  labs(title = "A") +
+  guides(color = FALSE, fill = FALSE) +
+  theme(
+    legend.text = element_blank(),
+    legend.key = element_blank(),
+    title = element_text(size = 16, face = "bold")
+  )
+# Rhat
+plot_rhat <-
+  bayesplot::mcmc_rhat_hist(bayesplot::rhat(fit_ilr)) +
+  labs(title = "B") +
+  guides(color = FALSE, fill = FALSE) +
+  theme(
+    legend.text = element_blank(),
+    legend.key = element_blank(),
+    title = element_text(size = 16, face = "bold")
+  ) +
+  yaxis_text(on = TRUE)
+
+# Combined plot
+plot_diagnostics <- gridExtra::grid.arrange(plot_neff, plot_rhat, ncol = 2)
+```
+
+## Parameter Plots
+```{r}
+# color scheme
+color_scheme_set(scheme = "purple")
+
+true_parameters <- sim_data$parameters
+```
+
+### Person Competence: Location
+```{r }
+plot_E_loc <-
+  mcmc_recover_scatter(x = fit_ilr$draws("E_loc"), true = true_parameters$E_loc) +
+  labs(
+    subtitle = "Person Competence: Location",
+  ) 
+plot_E_loc
+```
+
+### Person Competence: Width
+```{r }
+plot_E_wid <-
+  mcmc_recover_scatter(x = fit_ilr$draws("E_wid"), true = true_parameters$E_wid) +
+  labs(subtitle = "Person Competence: Width")
+plot_E_wid
+```
+
+### Person Scaling Bias: Location
+```{r }
+plot_a_loc <-
+  mcmc_recover_scatter(x = fit_ilr$draws("a_loc"), true = true_parameters$a_loc) +
+  labs(subtitle = "Person Scaling Bias: Location")
+plot_a_loc
+```
+
+### Person Shifting Bias: Location
+```{r }
+plot_b_loc <-
+  mcmc_recover_scatter(x = fit_ilr$draws("b_loc"), true = true_parameters$b_loc) +
+  labs(subtitle = "Person Shifting Bias: Location") 
+plot_b_loc
+```
+
+### Person Shifting Bias: Width
+```{r }
+plot_b_wid <-
+  mcmc_recover_scatter(x = fit_ilr$draws("b_wid"), true = true_parameters$b_wid) +
+  labs(subtitle = "Person Shifting Bias: Width")
+plot_b_wid
+```
+
+### Item Discernability: Location
+```{r }
+plot_lambda_loc <-
+  mcmc_recover_scatter(x = fit_ilr$draws("lambda_loc"),
+                       true = true_parameters$lambda_loc)
+plot_lambda_loc
+```
+
+### Item Discernability: Width
+```{r }
+# plot
+plot_lambda_wid <-
+  mcmc_recover_scatter(x = fit_ilr$draws("lambda_wid"),
+                       true = true_parameters$lambda_wid) +
+  labs(subtitle = "Item Discernability: Width")
+plot_lambda_wid
+```
+
+### Latent Truth Intervals
+```{r }
+# plot
+plot_Tr_loc <-
+  mcmc_recover_scatter(x = fit_ilr$draws("Tr_loc"),
+                       true = true_parameters$Tr_loc) +
+  labs(subtitle = "Item True Location")
+plot_Tr_loc
+```
+
+```{r }
+# plot
+plot_Tr_wid <-
+  mcmc_recover_scatter(x = fit_ilr$draws("Tr_wid"),
+                       true = true_parameters$Tr_wid) +
+  labs(subtitle = "Item True Width")
+
+plot_Tr_wid
+```
+
+```{r}
+# ITM estimates
+latent_truth_est_ilr <- data.frame(
+  idx = 1:J,
+  type = "estimated",
+  Tr_L_est = fit_ilr$summary("Tr_splx") %>% 
+    as.data.frame() %>% 
+    pull(median) %>% 
+    .[1:J],
+  Tr_wid_est = fit_ilr$summary("Tr_splx") %>% 
+    as.data.frame() %>% 
+    pull(median) %>% 
+    .[(J + 1):(J * 2)]
+) %>%
+  mutate(Tr_loc_est = Tr_L_est + Tr_wid_est / 2, 
+         Tr_U_est = Tr_L_est + Tr_wid_est)
+
+# compute means in the unbounded space
+means_ilr <-
+  cbind(jj, simplex_to_bvn(Y_splx), type = "ilr") %>%
+  as.data.frame() %>%
+  dplyr::group_by(jj) %>%
+  dplyr::summarise(across(everything(), mean, na.rm = TRUE)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-jj) %>%
+  bvn_to_simplex(type = "ilr") %>%
+  mutate(
+    idx = 1:J,
+    type = "simple_mean",
+    Tr_L_sm = x_1,
+    Tr_U_sm = 1 - x_3
+  ) %>%
+  select(-c(x_1, x_2, x_3))
+
+df_interval_plot_ilr <- full_join(latent_truth_est_ilr, latent_truth_true) %>%
+  full_join(means_ilr) %>% 
+  mutate(type = factor(type, levels = c("estimated", "true")))
+```
+
+#### Interval Plot
+```{r message=FALSE, warning=FALSE}
+cols <- c("ITM (ILR - cross)" = "red", "Mean" = "blue")
+
+df_interval_plot_ilr %>%
+  ggplot(aes(y = idx)) +
+    geom_errorbarh(
+    aes(xmin = Tr_L_true, xmax = Tr_U_true), 
+    height = 0,
+    linewidth = 5,
+    col = "grey80"
+  ) +
+  geom_errorbarh(
+    aes(xmin = Tr_L_sm, xmax = Tr_U_sm, colour = "Mean"),
+    height = 0,
+    linewidth = 3,
+    alpha = .4
+  ) +
+  geom_errorbarh(
+    aes(xmin = Tr_L_est, xmax = Tr_U_est, colour = "ITM (ILR - cross)"),
+    height = 0,
+    linewidth = 2,
+    alpha = .5
+    ) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = seq(0, 1, .25),
+    expand = expansion()
+  ) +
+    scale_y_discrete(
+    expand = expansion(add = 1)
+    ) +
+  scale_colour_manual(name = "Model", values = cols) +
+  labs(x = "Latent Truth", y = "Item")+
+  theme_pubr(base_size = 14) +
+  theme(plot.margin = margin(.1, .5, .1, .1, "cm"),
+        panel.grid.major = element_line())
+```
+
+### Comparison of ILR and SB Estimates
+```{r}
+df_interval_plot_comparison <-
+  full_join(
+    latent_truth_est_sb %>%
+      rename(
+        Tr_L_est_sb = Tr_L_est,
+        Tr_wid_est_sb = Tr_wid_est,
+        Tr_loc_est_sb = Tr_loc_est,
+        Tr_U_est_sb = Tr_U_est
+      ),
+    latent_truth_est_ilr %>%
+      rename(
+        Tr_L_est_ilr = Tr_L_est,
+        Tr_U_est_ilr = Tr_U_est,
+        Tr_wid_est_ilr = Tr_wid_est,
+        Tr_loc_est_ilr = Tr_loc_est
+      )
+  ) %>%
+  full_join(latent_truth_true) %>%
+  mutate(type = factor(type, levels = c("estimated", "true")))
+```
+
+```{r message=FALSE, warning=FALSE}
+cols <- c(
+  "True" = "grey70",
+  "SB (self)" = "blue",
+  "ILR (cross)" = "red"
+)
+
+df_interval_plot_comparison %>%
+  ggplot(aes(y = idx)) +
+  geom_errorbarh(
+    aes(xmin = Tr_L_true, xmax = Tr_U_true, col = "True"),
+    height = 0,
+    linewidth = 5
+  ) +
+  geom_errorbarh(
+    aes(
+      xmin = Tr_L_est_sb,
+      xmax = Tr_U_est_sb,
+      colour = "SB (self)"
+    ),
+    height = 0,
+    linewidth = 3,
+    alpha = .4
+  ) +
+  geom_errorbarh(
+    aes(
+      xmin = Tr_L_est_ilr,
+      xmax = Tr_U_est_ilr,
+      colour = "ILR (cross)"
+    ),
+    height = 0,
+    linewidth = 2,
+    alpha = .5
+  ) +
+  scale_y_discrete(expand = expansion(add = 1)) +
+  scale_color_manual(values = cols) +
+  labs(x = "Latent Truth", y = "Item") +
+  theme_pubr(base_size = 14) +
+  theme(plot.margin = margin(.1, .5, .1, .1, "cm"),
+        panel.grid.major = element_line())
+```

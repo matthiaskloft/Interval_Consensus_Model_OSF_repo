@@ -1,0 +1,495 @@
+---
+title: "Interval Truth Model"
+subtitle: "Model Illustrations"
+author: 
+ - name: Matthias Kloft
+   orcid: 0000-0003-1845-6957
+   affiliations: University of Marburg  
+ - name: Björn S. Siepe
+   orcid: 0000-0002-9558-4648
+   affiliations: University of Marburg
+ - name: Daniel W. Heck
+   orcid: 0000-0002-6302-9252
+   affiliations: University of Marburg
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-tools: true
+    code-summary: "Show the code"
+    fig-width: 7
+    fig-height: 4.5
+    embed-resources: true
+execute:
+  message: false
+  warning: false
+---
+
+```{r setup, include = FALSE}
+# Libraries
+packages <- c(
+  "tidyverse",
+  "compositions",
+  "rmarkdown",
+  "cowplot",
+  "svglite",
+  "psych",
+  "here",
+  "ggpubr"
+)
+# in case cmdstanr is not installed
+# install.packages("cmdstanr",
+#                  repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+
+if (!require("pacman"))
+  install.packages("pacman")
+pacman::p_load(packages, update = F, character.only = T)
+
+# default chunk options
+knitr::opts_chunk$set(
+  fig.height = 7,
+  fig.width = 10,
+  include = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+source(here("src", "00_functions.R"))
+set.seed(35032)
+```
+
+
+# Illustration of Multivariate Logit Transform
+## Generate Data
+```{r}
+df <- data.frame(x_L = c(.05, .1, 1/3, .5, .9),
+                 x_U = c(.2, .9, 2/3, .8, .95))
+df$label <- 1:5
+df$x_loc <- (df$x_L + df$x_U) / 2
+df$x_wid <- (df$x_U - df$x_L)
+df$x_splx_1 <- df$x_L
+df$x_splx_2 <- df$x_U - df$x_L
+df$x_splx_3 <- 1 - df$x_U
+df$x_bvn_loc <- simplex_to_bvn(df %>% select(x_splx_1, x_splx_2, x_splx_3))[, 1]
+df$x_bvn_wid <- simplex_to_bvn(df %>% select(x_splx_1, x_splx_2, x_splx_3))[, 2]
+df$idx <- 1:nrow(df)
+df$x_sb_loc <- log(df$x_splx_1 / df$x_splx_3)
+df$x_sb_wid <- log(df$x_splx_2 / (df$x_splx_1 + df$x_splx_3))
+```
+
+## Plot
+### Plot: Intervals
+```{r}
+plot_logit_intervals <-
+  df %>%
+  ggplot() +
+  geom_errorbar(aes(y = (idx), xmin = x_L, xmax = x_U),
+                width = .3,
+                linewidth = .7) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, .25),
+    labels = c("0", ".25", ".50", ".75", "1"),
+    expand = expansion(0, 0)
+  ) +
+  geom_text(
+    aes(x = x_loc, y = label + .35, label = label),
+    family = "sans",
+    face = "bold",
+    size = 6
+  ) +
+  scale_y_continuous(expand = expansion(0, .2)) +
+  coord_equal(ratio = 1/5) +
+  labs(x = "Interval Response Scale", 
+       y = "Item Number", title = "A) Intervals") +
+  theme_itm(hide_axis_text_y = TRUE) +
+  theme(
+    plot.margin = margin(l = 0),
+    panel.grid = element_blank(),
+    axis.line = element_line(colour = "#6d6d6e", size = .3),
+    axis.ticks.x = element_line(colour = "#6d6d6e", size = .3),
+    axis.title.y = element_text(margin = margin(0,-10,0,0,"pt"), vjust = 0)
+    )
+
+plot_logit_intervals
+```
+
+### Plot: Ternary
+```{r}
+plot_logit_ternary <- df %>%
+  ggplot() +
+  geom_abline(intercept = 0, slope = 2, colour = "#6d6d6e", linewidth = .3) +
+  geom_abline(intercept = 2, slope = -2, colour = "#6d6d6e", linewidth = .3) +
+    geom_vline(xintercept = 0.5,
+             linetype = 2,
+             alpha = .2) +
+  geom_text(
+    aes(
+      x = x_loc, y = x_wid, label = factor(idx)
+    ), 
+    family = "sans",
+    face = "bold",
+    size = 6) +
+  
+  scale_x_continuous(
+    limits = c(0, 1),
+    breaks = c(0, .25, .5, .75, 1),
+    labels = c("0", ".25", ".50", ".75", "1"),
+    expand = expansion(0, 0)
+  ) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = c(0, .25, .5, .75, 1),
+    labels = c("0", ".25", ".50", ".75", "1"),
+    expand = expansion(0, 0)
+  ) +
+  coord_equal() +
+  labs(x = "Bounded Location", 
+       y = "Bounded Width", 
+       title = "B) Ternary") +
+  theme_itm() +
+  theme(panel.grid = element_blank(), 
+        axis.line = element_line(colour = "#6d6d6e", size = .3),
+        axis.ticks = element_line(colour = "#6d6d6e", size = .3),
+        axis.title.y = element_text(margin = margin(0, 7, 0, 0, "pt")))
+
+plot_logit_ternary
+```
+
+### Plot: Bivariate Normal
+```{r}
+plot_logit_bvn <-
+  df %>%
+  ggplot() +
+  geom_text(
+    aes(x = x_bvn_loc, y = x_bvn_wid, label = factor(idx)),
+    family = "sans",
+    face = "bold",
+    size = 6
+  ) +
+  geom_vline(xintercept = 0,
+             linetype = 2,
+             alpha = .2) +
+  geom_hline(yintercept = 0,
+             linetype = 2,
+             alpha = .2) +
+  scale_x_continuous(
+    limits = c(-2.5, 2.5),
+    breaks = seq(-2, 2, 2),
+    expand = expansion(0, 0)
+  ) +
+  scale_y_continuous(
+    limits = c(-2.5, 2.5),
+    breaks = seq(-2, 2, 2),
+    expand = expansion(0, 0)
+  ) +
+  coord_equal() +
+  labs(x = "Unbounded Location", 
+       y = "Unbounded Width", 
+       title = "C) Bivariate Normal") +
+  theme_itm() +
+  theme(panel.grid = element_blank(), 
+        axis.line = element_line(colour = "#6d6d6e", size = .3),
+        axis.ticks = element_line(colour = "#6d6d6e", size = .3),
+        axis.title.y = element_text(margin = margin(0, -5, 0, 0, "pt"))
+  )
+
+plot_logit_bvn
+```
+
+### Combine Plots
+```{r}
+plot_logit_combined <-
+  cowplot::plot_grid(
+    plot_logit_intervals,
+    plot_logit_ternary,
+    plot_logit_bvn,
+    align = "hv",
+    ncol = 3,
+    label_size = 16,
+    label_fontfamily = "serif",
+    label_fontface = "bold",
+    hjust = -1,
+    vjust = 2.3
+  ) +
+  theme(plot.margin = margin(l = -15))
+plot_logit_combined
+
+width <- 15
+height <- 5.3
+scale <- 1.6
+ggsave(
+  here("plots", "logit_illustration.pdf"),
+  plot = plot_logit_combined,
+  width = width,
+  height = height,
+  units = "cm",
+  scale = scale
+)
+```
+
+
+## Comparison: Isometric Log-Ratio (ILR) vs. Stick-Breaking (SB)
+```{r}
+plot_comparison <- 
+  df %>% select(idx, x_bvn_loc, x_bvn_wid, x_sb_loc, x_sb_wid) %>%
+  pivot_longer(
+    cols = -idx,
+    names_to = c("variable", ".value"),
+    names_pattern = "(.+)_(loc|wid)"
+  ) %>%
+  ggplot() +
+  geom_vline(xintercept = 0, linetype = 2, alpha = .5) +
+  geom_hline(yintercept = 0, linetype = 2, alpha = .5) +
+  geom_text(aes(label = idx, x = loc, y = wid), size = 6) +
+  scale_x_continuous(
+    limits = c(-3.2, 3.2),
+    breaks = seq(-2, 2, 2),
+    expand = expansion(0, 0)
+  ) +
+  scale_y_continuous(
+    limits = c(-3.2, 3.2),
+    breaks = seq(-2, 2, 2),
+    expand = expansion(0, 0)
+  ) +
+  facet_wrap(~variable) +
+  coord_equal() +
+  theme_itm() +
+  theme(panel.grid = element_blank(), 
+        axis.line = element_line(colour = "#6d6d6e", size = .3),
+        axis.ticks = element_line(colour = "#6d6d6e", size = .3),
+        strip.text = element_text(size = 12, family = "serif", face = "bold"),
+        strip.background = element_blank())
+
+plot_comparison_combined <-
+  cowplot::plot_grid(
+    plot_logit_intervals,
+    plot_comparison,
+    align = "hv",
+    nrow = 1,
+    rel_widths = c(1/3, 2/3),
+    label_size = 16,
+    label_fontfamily = "serif",
+    label_fontface = "bold",
+    hjust = -1,
+    vjust = 2.3
+  )
+plot_comparison_combined
+```
+
+
+# Illustration of Interval Truth Model
+## Generate Data
+```{r}
+n_items <- 100
+Tr_loc <- rnorm(n_items, 0, 1.5)
+Tr_wid <- rnorm(n_items, -1, 1)
+lambda_loc <- rep(1, n_items)
+lambda_wid <- rep(1, n_items)
+```
+
+```{r}
+reference_data <-
+  generate_itm_one_respondent(
+    Tr_loc = Tr_loc,
+    Tr_wid = Tr_wid,
+    lambda_loc = lambda_loc,
+    lambda_wid = lambda_wid,
+    E_loc = 3,
+    E_wid = 3,
+    a_loc = 1,
+    b_loc = 0,
+    b_wid = 0,
+    omega = 0
+  )
+```
+
+```{r}
+# true intervals
+responses_true_intervals <-  
+  reference_data %>% 
+  mutate(condition = "true intervals",
+         type = "respondent",
+         x_L = Tr_L,
+         x_U = Tr_U)
+  
+```
+
+```{r}
+# reference respondent
+responses_reference_respondent <-   
+  reference_data %>% 
+  mutate(condition = "reference",
+         type = "respondent")
+```
+
+```{r}
+# scaling proficiency location
+responses_proficiency_loc <-   
+  reference_data %>% 
+  mutate(condition = "proficiency location",
+         type = "respondent",
+         Y_loc = Tr_loc + error_loc * 6,
+         x_L = bvn_to_simplex(cbind(Y_loc,Y_wid))[,1],
+         x_U = x_L + bvn_to_simplex(cbind(Y_loc,Y_wid))[,2]
+  )
+```
+
+```{r}
+# scaling proficiency width
+responses_proficiency_wid <- 
+  reference_data %>% 
+  mutate(condition = "proficiency width",
+         type = "respondent",
+         Y_wid = Tr_wid + error_wid * 6,
+         x_L = bvn_to_simplex(cbind(Y_loc,Y_wid))[,1],
+         x_U = x_L + bvn_to_simplex(cbind(Y_loc,Y_wid))[,2]
+  )
+```
+
+```{r}
+# shifting bias location
+responses_shifting_loc <-
+  reference_data %>% 
+  mutate(condition = "shifting bias location",
+         type = "respondent",
+         Y_loc = A_loc + 2,
+         x_L = bvn_to_simplex(cbind(Y_loc,Y_wid))[,1],
+         x_U = x_L + bvn_to_simplex(cbind(Y_loc,Y_wid))[,2]
+  )
+```
+
+```{r}
+# shifting bias width
+responses_shifting_wid <-
+  reference_data %>% 
+  mutate(condition = "shifting bias width",
+         type = "respondent",
+         Y_wid = A_wid + 2,
+         x_L = bvn_to_simplex(cbind(Y_loc,Y_wid))[,1],
+         x_U = x_L + bvn_to_simplex(cbind(Y_loc,Y_wid))[,2]
+  )
+```
+
+```{r}
+# scaling bias
+responses_scaling <- 
+  reference_data %>% 
+  mutate(condition = "scaling bias location",
+         type = "respondent",
+         Y_loc = A_loc * 1.5,
+         x_L = bvn_to_simplex(cbind(Y_loc,Y_wid))[,1],
+         x_U = x_L + bvn_to_simplex(cbind(Y_loc,Y_wid))[,2]
+  )
+```
+
+```{r}
+responses <-
+  bind_rows(
+    responses_reference_respondent,
+    responses_proficiency_loc,
+    responses_proficiency_wid,
+    responses_shifting_loc,
+    responses_shifting_wid,
+    responses_scaling
+  ) %>%
+  mutate(
+    condition = factor(
+      condition,
+      levels = c(
+        "reference",
+        "proficiency location",
+        "proficiency width",
+        "shifting bias location",
+        "scaling bias location",
+        "shifting bias width"
+      )
+    ),
+    type = factor(type)
+  )
+
+sample <- sample(1:n_items, 10)
+conditions <- c(
+        "reference",
+        "proficiency location",
+        "proficiency width",
+        "shifting bias location",
+        "scaling bias location",
+        "shifting bias width"
+      )
+```
+
+
+## Plot
+### Plot: 2d Scatter
+```{r}
+plot_2d_scatter_list <-
+  map(
+    conditions,
+    ~ responses %>%
+      dplyr::filter(condition == .x) %>%
+      mutate(idx = factor(idx) %>% as.double(), ) %>%
+      plot_example_2Dscatter()
+  )
+plot_2d_scatter_list
+```
+
+### Plot: Intervals
+```{r}
+plot_intervals_list <-
+  map(
+    conditions,
+    ~ responses %>%
+      dplyr::filter(condition == .x) %>%
+      dplyr::filter(idx %in% sample) %>%
+      mutate(idx = factor(idx) %>% as.double()) %>%
+      plot_example_intervals()
+  )
+ 
+plot_intervals_list
+```
+
+### Plot: combined horizontal
+```{r}
+plot_combined_list <-
+  map2(.x = plot_2d_scatter_list,
+       .y = plot_intervals_list,
+       ~ cowplot::plot_grid(.x, .y, ncol = 2) +
+         theme(plot.margin = margin(1, .2, .5, .2, "cm")))
+
+labels <- c(
+      "A) Reference Respondent",
+      "B) Positive Shifting Bias Location",
+      "C) Low Proficiency Location",
+      "D) Positive Scaling Bias Location",
+      "E) Low Proficiency Width",
+      "F) Positive Shifting Bias Width"
+    )
+
+plot_combined <-
+  cowplot::plot_grid(
+    byrow = F,
+    plotlist = plot_combined_list,
+    align = "hv",
+    axis = c(rep("l", 3), rep("r", 3)),
+    ncol = 2,
+    rel_widths = c(1, 1),
+    labels = labels,
+    label_size = 15,
+    label_fontfamily = "sans",
+    label_fontface = "plain") +
+  theme(plot.margin = margin(l = -5))
+
+plot_combined
+
+ggsave(
+  plot = plot_combined, 
+  filename = here("plots", "itm_parameter_illustration.pdf"),
+  width = 15,
+  height = 11,
+  units = "cm",
+  scale = 1.8
+)
+```

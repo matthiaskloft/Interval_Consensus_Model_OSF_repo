@@ -1,0 +1,1230 @@
+---
+title: "Interval Truth Model"
+subtitle: "Visualizations of Priors in the ITM"
+author: 
+ - name: Matthias Kloft
+   orcid: 0000-0003-1845-6957
+   affiliations: University of Marburg  
+ - name: Björn S. Siepe
+   orcid: 0000-0002-9558-4648
+   affiliations: University of Marburg
+ - name: Daniel W. Heck
+   orcid: 0000-0002-6302-9252
+   affiliations: University of Marburg
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-tools: true
+    code-summary: "Show the code"
+    fig-width: 7
+    fig-height: 4.5
+    embed-resources: true
+execute:
+  message: false
+  warning: false
+---
+
+```{r setup, include = FALSE}
+# Libraries
+packages <- c(
+  "tidyverse",
+  "yardstick",
+  "readxl",
+  "cmdstanr",
+  "bayesplot",
+  "posterior",
+  "bayestestR",
+  "rmarkdown",
+  "cowplot",
+  "svglite",
+  "psych",
+  "here",
+  "ggpubr"
+)
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(packages, update = F, character.only = T)
+
+# default chunk options
+knitr::opts_chunk$set(
+  fig.height = 7,
+  fig.width = 10,
+  include = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+source(here("src", "00_functions.R"))
+set.seed(35032)
+```
+
+# Latent Appraisal
+
+## True Intervals
+
+### Informative Beta Prior on Marginal Locations and Widths
+
+We are mainly interested in the latent consensus $[T^{loc}_{j}, T^{wid}_{j}]^\top$. 
+First, since we know that very wide interval widths are highly unlikely and also not meaningful in most use cases, we assign a weakly informative prior on the true interval widths on the bounded scale:
+$$
+\begin{equation}
+    T^{wid(0,1)}_j \sim \text{Beta}(1.2, 3)
+\end{equation}
+$$
+This prior has an expected value of $.29$ and a mode of $.09$ and therefore reflects our beliefs about the marginal true interval widths more adequately than a uniform prior.
+
+Second, conditional on a particular interval width, we do not believe that particular interval locations are more likely than others.
+Therefore, we assign an uninformative prior to an auxiliary shifting weight parameter $s_j$, which is subsequently used to compute the actual true locations on the bounded scale:
+$$
+\begin{equation}
+\begin{split}
+    s_j &\sim \text{Beta}(1, 1), \\
+    T^{loc(0,1)}_j &= s_j (1 - T^{wid(0,1)}_j) + \frac{T^{wid(0,1)}_j}{2}. \\
+\end{split}
+\end{equation}
+$$
+This means that for a given interval width, we take what is left of the response scale and multiply it by the shifting weight $s_j$, which results in the lower bound for this particular interval.
+To arrive at the interval location, we add half of the respective interval width to this lower bound.
+
+Third, we transform the true interval from the bounded simplex to the unbounded bivariate scale via the isometric log-ratio function:
+$$
+\begin{equation}
+    \boldsymbol T^* = \text{ILR}\Bigg(\bigg[
+            T^{loc(0,1)}_j - \frac{T^{wid(0,1)}_j}{2}, \;
+            T^{wid(0,1)}_j, \;
+            T^{loc(0,1)}_j + \frac{T^{wid(0,1)}_j}{2}
+            \bigg]^\top\Bigg).
+\end{equation}
+$$
+
+### Sample From Priors
+```{r}
+# priors on marginal locations and widths
+df <- data.frame(Tr_wid_splx = rbeta(1e5, 1.2, 3))
+df$Tr_loc_splx <- 
+  (1 - df$Tr_wid_splx) * rbeta(1e5,1,1) + df$Tr_wid_splx / 2
+# transform to bivariate normal
+Tr_bvn <- simplex_to_bvn(
+  cbind(
+    df$Tr_loc_splx - .5 * df$Tr_wid_splx,
+    df$Tr_wid_splx,
+    1 - (df$Tr_loc_splx + .5 * df$Tr_wid_splx)))
+
+df <- cbind(df, Tr_loc = Tr_bvn[, 1], Tr_wid = Tr_bvn[, 2])
+
+# transform back to simplex
+Tr_splx <- bvn_to_simplex(
+  cbind(df$Tr_loc, df$Tr_wid))
+df$Tr_loc_splx <- Tr_splx[,1] + .5 * Tr_splx[,2]
+df$Tr_wid_splx <- Tr_splx[,2]
+```
+
+### Marginal Distributions
+```{r}
+df %>%
+  ggplot() +
+  geom_histogram(
+    aes(Tr_loc_splx),
+    fill = "lightblue",
+    alpha = 1,
+    binwidth = .005
+  ) +
+  geom_histogram(aes(Tr_wid_splx),
+               fill = "purple",
+               alpha = .3,
+               binwidth = .005) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Marginal Locations / Widths", y = "Density") +
+  theme_pubr()
+```
+
+```{r}
+df %>%
+  ggplot() +
+  geom_histogram(
+    aes(Tr_loc),
+    fill = "lightblue",
+    alpha = 1,
+    binwidth = .005
+  ) +
+  geom_histogram(aes(Tr_wid),
+               fill = "purple",
+               alpha = .3,
+               binwidth = .005, ) +
+  scale_x_continuous(
+    limits = c(NA, NA),
+    expand = expansion()
+  ) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Marginal Locations / Widths", y = "Density") +
+  theme_pubr()
+```
+
+### Joint Distribution
+### Ternary
+```{r}
+df %>%
+  ggplot() +
+  geom_abline(intercept = 0, slope = 2) +
+  geom_abline(intercept = 2, slope = -2) +
+  geom_point(
+    aes(x = Tr_loc_splx, y = Tr_wid_splx),
+    size = 1,
+    alpha = .1,
+    shape = 16
+  )+
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+    scale_y_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  theme_pubr()
+```
+
+#### Unbounded Scale
+```{r}
+df %>%
+  ggplot() +
+  geom_point(
+    aes(x = Tr_loc, y = Tr_wid),
+    size = 1,
+    alpha = .1,
+    shape = 16
+  ) +
+  theme_pubr()
+```
+
+
+## Lambda (Item Discernibility)
+
+### sigma_lambda
+
+```{r}
+df$sigma_lambda <- exp(rnorm(1e5, log(.5), .5))
+#median(lambda$sigma_lambda)
+
+df %>%
+  ggplot() +
+  geom_histogram(aes(x = sigma_lambda),
+                 fill = "lightblue",
+                 binwidth = .01) +
+  scale_x_continuous(limits = c(0, 2.5), expand = expansion()) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  theme_pubr()
+```
+
+### lambda
+
+```{r}
+df$lambda_loc <- exp(rnorm(1e5, 0, df$sigma_lambda))
+df$lambda_wid <- exp(rnorm(1e5, 0, df$sigma_lambda))
+
+df %>%
+  ggplot() +
+  geom_histogram(aes(x = lambda_loc),
+                 fill = "lightblue",
+                 binwidth = .01) +
+  scale_x_continuous(limits = c(0, 5), expand = expansion()) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  theme_pubr()
+```
+
+## E (Person Proficiency)
+
+### mu_E
+
+Then narrow Student t prior ensures that the population proficiency is regularized to 1.
+
+```{r}
+df$mu_E <- rnorm(1e5)
+
+df %>%
+  ggplot() +
+  geom_histogram(aes(x = exp(mu_E)),
+                 fill = "lightblue",
+                 binwidth = .01) +
+  scale_x_continuous(limits = c(0, 5), expand = expansion()) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  theme_pubr()
+```
+
+### sigma_E
+
+```{r}
+df$sigma_E <- exp(rnorm(1e5, log(.5), .5))
+
+df %>%
+  ggplot() +
+  geom_histogram(aes(x = sigma_E),
+                 fill = "lightblue",
+                 binwidth = .01) +
+  scale_x_continuous(limits = c(0, 2.5), expand = expansion()) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  theme_pubr()
+```
+
+### E
+
+```{r}
+df$E_loc <- exp(rnorm(1e5, mean = df$mu_E, sd = df$sigma_E))
+df$E_wid <- exp(rnorm(1e5, mean = df$mu_E, sd = df$sigma_E))
+
+df %>%
+  ggplot() +
+  geom_histogram(aes(x = E_loc),
+                 fill = "lightblue",
+                 binwidth = .01) +
+  scale_x_continuous(limits = c(0, 5), expand = expansion()) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  theme_pubr()
+```
+
+### Lambda and E joint
+
+```{r}
+df %>%
+  ggplot() +
+  geom_histogram(aes(x = 1 / lambda_loc / E_loc),
+                 fill = "lightblue",
+                 binwidth = .01) +
+  scale_x_continuous(limits = c(0, 5), expand = expansion()) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "SD of Latent Appraisal", y = "Density") +
+  theme_pubr()
+```
+
+## Omega (Residual Correlation)
+
+```{r}
+beta_param <- 2
+df$omega <- rbeta(1e5, shape1 = beta_param, shape2 = beta_param)*2-1
+
+df %>%
+  ggplot() +
+  geom_histogram(aes(x = omega),
+                 fill = "lightblue",
+                 binwidth = .01) +
+  scale_x_continuous(limits = c(-1, 1), expand = expansion()) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  theme_pubr()
+```
+
+## Latent Appraisals
+
+### Marginal Appraisals
+
+```{r}
+A <- rbvnorm(1e5, 
+             mean1 = df$Tr_loc, 
+             mean2 = df$Tr_wid,
+             sd1 = 1 / df$lambda_loc / df$E_loc,
+             sd2 = 1 / df$lambda_wid / df$E_wid,
+             cor = df$omega)
+
+df$A_loc <- rnorm(1e5, mean = df$Tr_loc, sd = 1 / df$lambda_loc / df$E_loc)
+df$A_wid <- rnorm(1e5, mean = df$Tr_wid, sd = 1 / df$lambda_wid / df$E_wid)
+
+A_splx <- bvn_to_simplex(df[,c("A_loc", "A_wid")])
+df$A_loc_splx <- A_splx[,1] + .5 * A_splx[,2]
+df$A_wid_splx <- A_splx[,2]
+
+df %>%
+  ggplot() +
+  geom_density(aes(A_loc_splx),
+               fill = "lightblue",
+               alpha = .3,
+               shape = 16) +
+  geom_density(aes(A_wid_splx),
+               fill = "purple",
+               alpha = .3,
+               shape = 16) +
+  scale_x_continuous(limits = c(0, 1), expand = expansion()) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Appraisal Locations / Widths", y = "Density") +
+  theme_pubr()
+```
+
+## Joint Appraisals
+
+```{r}
+df %>%
+  ggplot() +
+  geom_abline(intercept = 0, slope = 2) +
+  geom_abline(intercept = 2, slope = -2) +
+  geom_point(
+    aes(x = A_loc_splx, y = A_wid_splx),
+    size = 1,
+    alpha = .1,
+    shape = 16
+  )+
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+    scale_y_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  theme_pubr()
+```
+
+# Biases
+
+## Shifting Bias
+
+### sigma_b
+```{r}
+df$sigma_b <- exp(rnorm(1e5, log(.5), 1))
+
+df %>%
+  ggplot() +
+  geom_histogram(aes(x = sigma_b),
+                 fill = "lightblue",
+                 binwidth = .01) +
+  scale_x_continuous(limits = c(0, 5), expand = expansion()) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  theme_pubr()
+```
+
+
+### b
+```{r}
+df$b_loc <- rnorm(1e5, mean = 0, sd = df$sigma_b)
+df$b_wid <- rnorm(1e5, mean = 0, sd = df$sigma_b)
+
+df %>%
+  ggplot() +
+  geom_histogram(aes(x = b_loc),
+                 fill = "lightblue",
+                 binwidth = .01) +
+  scale_x_continuous(limits = c(-5, 5), expand = expansion()) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  theme_pubr()
+```
+
+```{r}
+b_splx <- bvn_to_simplex(df[,c("b_loc", "b_wid")])
+df$b_loc_splx <- b_splx[,1] + .5 * b_splx[,2]
+df$b_wid_splx <- b_splx[,2]
+
+df %>%
+  ggplot() +
+  geom_abline(intercept = 0, slope = 2) +
+  geom_abline(intercept = 2, slope = -2) +
+  geom_point(
+    aes(x = b_loc_splx, y = b_wid_splx),
+    size = 1,
+    alpha = .1,
+    shape = 16
+  )+
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+    scale_y_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  theme_pubr()
+```
+
+## a (Scaling Bias)
+
+### sigma_a
+
+```{r}
+df$sigma_a <- exp(rnorm(1e5, log(.5), .5))
+
+df %>%
+  ggplot() +
+  geom_histogram(aes(x = sigma_a),
+                 fill = "lightblue",
+                 binwidth = .01) +
+  scale_x_continuous(limits = c(0, 2.5), expand = expansion()) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  theme_pubr()
+```
+
+### a
+
+```{r}
+df$a_loc <- exp(rnorm(1e5, mean = 0, sd = df$sigma_a))
+
+df %>%
+  ggplot() +
+  geom_histogram(aes(x = a_loc),
+                 fill = "lightblue",
+                 binwidth = .01) +
+  scale_x_continuous(limits = c(0, 5), expand = expansion()) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  theme_pubr()
+```
+
+# Responses
+
+## Marginal Responses
+
+```{r}
+df$Y_loc <- df$A_loc * df$a_loc + df$b_loc
+df$Y_wid <- df$A_wid + df$b_wid
+
+Y_splx <- bvn_to_simplex(df[,c("Y_loc", "Y_wid")])
+df$Y_loc_splx <- Y_splx[,1] + .5 * Y_splx[,2]
+df$Y_wid_splx <- Y_splx[,2]
+
+df %>%
+  ggplot() +
+  geom_histogram(
+    aes(Y_loc_splx),
+    fill = "lightblue",
+    alpha = 1,
+    binwidth = .005
+  ) +
+  geom_histogram(aes(Y_wid_splx),
+               fill = "purple",
+               alpha = .3,
+               binwidth = .005) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Marginal Locations / Widths", y = "Density") +
+  theme_pubr()
+```
+
+## Joint Responses
+
+```{r}
+df %>%
+  ggplot() +
+  geom_abline(intercept = 0, slope = 2) +
+  geom_abline(intercept = 2, slope = -2) +
+  geom_point(
+    aes(x = Y_loc_splx, y = Y_wid_splx),
+    size = 1,
+    alpha = .1,
+    shape = 16
+  )+
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+    scale_y_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  theme_pubr()
+```
+
+
+***
+
+
+# Recovery Check
+
+## Define Parameter Bounds for Variances
+```{r}
+# compute a benchmark for the mean and SD of the parameters
+mean_benchmark <- simplex_to_bvn(c(.4, .2, .4), type = "ilr")
+sd_benchmark_loc <- simplex_to_bvn(c(.98, .01, .01), type = "ilr")
+sd_benchmark_wid <- simplex_to_bvn(c(.495, .01, .495), type = "ilr")
+# mean for Tr_loc
+mu_Tr_loc <- mean_benchmark[1]
+# mean for Tr_wid
+mu_Tr_wid <- mean_benchmark[2]
+# SD forTr_loc
+sigma_Tr_loc <- sd_benchmark_loc[1] / 4
+# SD Tr_wid
+sigma_Tr_wid <- abs(sd_benchmark_wid[2] - mean_benchmark[2]) / 4
+
+# SDs for other parameters
+sigma_lambda_E_loc <- .3
+sigma_lambda_E_wid <- .3
+sigma_a_loc <- .3
+sigma_b_loc <- sigma_Tr_loc / 3
+sigma_b_wid <- sigma_Tr_wid / 3
+```
+
+## Generate Data for One Replication
+```{r}
+n_respondents <- 50
+n_items <- 20
+
+sim_data <-
+  generate_itm_data_sim_study(
+    n_respondents = n_respondents,
+    n_items = n_items,
+    mu_Tr_loc = mu_Tr_loc,
+    mu_Tr_wid = mu_Tr_wid,
+    sigma_Tr_loc = sigma_Tr_loc,
+    sigma_Tr_wid = sigma_Tr_wid,
+    sigma_lambda_E_loc = sigma_lambda_E_loc,
+    sigma_lambda_E_wid = sigma_lambda_E_wid,
+    sigma_a_loc = sigma_a_loc,
+    sigma_b_loc = sigma_b_loc,
+    sigma_b_wid = sigma_b_wid,
+    omega_beta = 3
+  )
+responses <- sim_data$responses
+```
+
+### Plot Data
+```{r} 
+samples <- gather_values(
+  lower = responses$x_L,
+  upper = responses$x_U,
+  item_id = responses$jj,
+  step_size = 0.01
+)
+samples %>% 
+  ggplot(aes(x = samples)) +
+  geom_density(fill = "purple", alpha = .5) +
+  facet_wrap(~item_id) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  theme_pubr() +
+  theme(plot.margin = margin(.1, .5, .1, .1, "cm"),
+        panel.grid.major = element_line())
+
+```
+
+### Plot True Intervals as Error Bars
+```{r}
+data.frame(
+  idx = 1:n_items,
+  lower = sim_data$parameters$Tr_L,
+  upper = sim_data$parameters$Tr_U
+) %>%
+  ggplot(aes(y = idx)) +
+  geom_errorbarh(aes(xmin = lower, xmax = upper), height = 0.3) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = seq(0, 1, .25),
+    expand = expansion()
+  ) +
+  labs(x = "Latent Truth",
+       y = "Item") +
+  theme_pubr() +
+  theme(plot.margin = margin(.1, .5, .1, .1, "cm"),
+        panel.grid.major = element_line())
+```
+
+### Plot True Intervals as Ternary Plot
+```{r}
+data.frame(
+  idx = 1:n_items,
+  Tr_L = sim_data$parameters$Tr_L,
+  Tr_U = sim_data$parameters$Tr_U) %>% 
+  mutate(
+  Tr_loc = Tr_L + (Tr_U - Tr_L) / 2,
+  Tr_wid = Tr_U - Tr_L
+) %>%
+  ggplot() +
+  geom_abline(intercept = 0, slope = 2) +
+  geom_abline(intercept = 2, slope = -2) +
+  geom_point(
+    aes(x = Tr_loc, y = Tr_wid),
+    size = 4,
+    alpha = .5,
+    shape = 16
+  )+
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+    scale_y_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  theme_pubr()
+```
+
+
+## Fit Model
+
+### Stan Data
+```{r}
+### Stan data declaration
+I <- length(unique(responses$ii))
+J <- length(unique(responses$jj))
+N <- nrow(responses)
+ii <- responses$ii
+jj <- responses$jj
+nn <- c(1:N)
+Y_splx <- cbind(responses$x_splx_1, responses$x_splx_2, responses$x_splx_3) %>%
+  as.matrix()
+
+#Y_splx[is.na(Y_splx)]
+
+# sanity check: all rows sum to 1
+# check <- apply(Y_splx, 1, sum) %>% as.data.frame()
+# table(check)
+
+## stan data list
+stan_data <- list(
+  I = I,
+  J = J,
+  N = N,
+  ii = ii,
+  jj = jj,
+  nn = nn,
+  Y_splx = Y_splx,
+  link = 1
+)
+```
+
+### Compile Model
+```{r}
+# Choose model to fit
+model_name <- "itm_simulation_v2_beta"
+# Compile model
+model <-
+  cmdstanr::cmdstan_model(
+    stan_file = here("src", "models", paste0(model_name, ".stan")),
+    pedantic = TRUE,
+    quiet = FALSE
+  )
+```
+
+### Run Sampler
+```{r eval=TRUE, message=FALSE, warning=FALSE}
+# number of MCMC chains
+n_chains <- 4
+# Run sampler
+fit_prior_check <- model$sample(
+  data = stan_data,
+  seed = 2023,
+  chains = n_chains,
+  parallel_chains = n_chains,
+  iter_warmup = 500,
+  iter_sampling = 500,
+  refresh = 500,
+  adapt_delta = .99,
+  init = .1
+)
+
+# save fit_prior_check
+fit_prior_check$save_object(
+  file =  here("fits", paste0(model_name, "_fit_prior_check.rds")))
+```
+
+```{r}
+# load  fit
+fit_prior_check <- readRDS(
+  file =  here("fits", paste0(model_name, "_fit_prior_check.rds")))
+```
+
+
+***
+
+### Get Estimates
+```{r}
+estimates_summary <- fit_prior_check$summary()
+```
+
+### Sampler Diagnostics
+```{r}
+fit_prior_check$diagnostic_summary()
+```
+
+```{r}
+# sampler diagnostics
+fit_prior_check$sampler_diagnostics(format = "df") %>% 
+  psych::describe(quant = c(.05,.95),) %>%
+  round(2) %>%  
+  as.data.frame() %>% 
+  dplyr::select(median, min, Q0.05, Q0.95,  max) %>% 
+  .[-c(7:9),]
+```
+
+```{r}
+# convergence diagnostics
+convergence_summary <- 
+  fit_prior_check$draws(format = "df") %>%
+  summarise_draws(.x = ., "rhat", "ess_bulk", "ess_tail") %>%
+  remove_missing() %>%
+  select(-variable) %>%
+  psych::describe(., quant = c(.05, .95)) %>%
+  as.data.frame() %>%
+  select(mean, median, Q0.05, Q0.95, min, max)
+
+convergence_summary %>% round(3)
+```
+
+### Effective sample size (ESS) & Rhat Plots
+```{r message=FALSE, warning=FALSE}
+# color scheme
+color_scheme_set(scheme = "purple")
+
+# Effective sample sizes
+plot_neff <-
+  mcmc_neff_hist(bayesplot::neff_ratio(fit_prior_check), binwidth = .01) +
+  labs(title = "A") +
+  guides(color = FALSE, fill = FALSE) +
+  theme(
+    legend.text = element_blank(),
+    legend.key = element_blank(),
+    title = element_text(size = 16, face = "bold")
+  )
+# Rhat
+plot_rhat <-
+  bayesplot::mcmc_rhat_hist(bayesplot::rhat(fit_prior_check)) +
+  labs(title = "B") +
+  guides(color = FALSE, fill = FALSE) +
+  theme(
+    legend.text = element_blank(),
+    legend.key = element_blank(),
+    title = element_text(size = 16, face = "bold")
+  ) +
+  yaxis_text(on = TRUE)
+
+# Combined plot
+plot_diagnostics <- gridExtra::grid.arrange(plot_neff, plot_rhat, ncol = 2)
+```
+
+## Parameter Plots
+```{r}
+# color scheme
+color_scheme_set(scheme = "purple")
+
+true_parameters <- sim_data$parameters
+```
+
+### Person Competence: Location
+```{r }
+plot_E_loc <-
+  mcmc_recover_scatter(x = fit_prior_check$draws("E_loc"), true = true_parameters$E_loc) +
+  labs(
+    subtitle = "Person Competence: Location",
+  ) 
+plot_E_loc
+```
+
+### Person Competence: Width
+```{r }
+plot_E_wid <-
+  mcmc_recover_scatter(x = fit_prior_check$draws("E_wid"), true = true_parameters$E_wid) +
+  labs(subtitle = "Person Competence: Width")
+plot_E_wid
+```
+
+### Person Scaling Bias: Location
+```{r }
+plot_a_loc <-
+  mcmc_recover_scatter(x = fit_prior_check$draws("a_loc"), true = true_parameters$a_loc) +
+  labs(subtitle = "Person Scaling Bias: Location") +
+  theme(
+    text = element_text(
+      family = "serif",
+      size = 16,
+      colour = 1
+    ),
+    plot.title = element_text(size = 20,
+                              face = "bold"),
+    plot.margin = unit(c(.1, .1, .1, .1), "cm"),
+    axis.title = element_text(size = 16, color = 1),
+    axis.title.x = element_text(margin = margin(t = 5)),
+    axis.title.y = element_text(margin = margin(r = 5)),
+    axis.text = element_text(size = 12, colour = "black"),
+    axis.text.x = element_text(margin = margin(t = 3))
+  )
+plot_a_loc
+```
+
+### Person Shifting Bias: Location
+```{r }
+plot_b_loc <-
+  mcmc_recover_scatter(x = fit_prior_check$draws("b_loc"), true = true_parameters$b_loc) +
+  labs(subtitle = "Person Shifting Bias: Location") 
+plot_b_loc
+```
+
+### Person Shifting Bias: Width
+```{r }
+plot_b_wid <-
+  mcmc_recover_scatter(x = fit_prior_check$draws("b_wid"), true = true_parameters$b_wid) +
+  labs(subtitle = "Person Shifting Bias: Width")
+plot_b_wid
+```
+
+### Item Discernability: Location
+```{r }
+plot_lambda_loc <-
+  mcmc_recover_scatter(x = fit_prior_check$draws("lambda_loc"),
+                       true = true_parameters$lambda_loc)
+plot_lambda_loc
+```
+
+### Item Discernability: Width
+```{r }
+# plot
+plot_lambda_wid <-
+  mcmc_recover_scatter(x = fit_prior_check$draws("lambda_wid"),
+                       true = true_parameters$lambda_wid) +
+  labs(subtitle = "Item Discernability: Width")
+plot_lambda_wid
+```
+
+### Residual Correlation
+```{r }
+plot_omega <-
+  mcmc_recover_scatter(x = fit_prior_check$draws("omega"),
+                       true = true_parameters$omega) +
+  xlim(-1, 1) +
+  ylim(-1, 1) +
+  labs(subtitle = "Residual Correlation")
+plot_omega
+```
+
+
+### Latent Truth Intervals
+```{r }
+# plot
+plot_Tr_loc <-
+  mcmc_recover_scatter(x = fit_prior_check$draws("Tr_loc"),
+                       true = true_parameters$Tr_loc) +
+  labs(subtitle = "Item True Location")
+plot_Tr_loc
+```
+
+```{r }
+# plot
+plot_Tr_wid <-
+  mcmc_recover_scatter(x = fit_prior_check$draws("Tr_wid"),
+                       true = true_parameters$Tr_wid) +
+  labs(subtitle = "Item True Width")
+
+plot_Tr_wid
+```
+
+```{r}
+# ITM estimates
+latent_truth_est_ilr <- data.frame(
+  idx = 1:J,
+  type = "estimated",
+  Tr_L_est = fit_prior_check$summary("Tr_splx") %>% 
+    as.data.frame() %>% 
+    pull(median) %>% 
+    .[1:J],
+  Tr_wid_est = fit_prior_check$summary("Tr_splx") %>% 
+    as.data.frame() %>% 
+    pull(median) %>% 
+    .[(J + 1):(J * 2)]
+) %>%
+  mutate(Tr_loc_est = Tr_L_est + Tr_wid_est / 2, 
+         Tr_U_est = Tr_L_est + Tr_wid_est)
+
+# compute means in the unbounded space
+means_ilr <-
+  cbind(jj, simplex_to_bvn(Y_splx)) %>%
+  as.data.frame() %>%
+  dplyr::group_by(jj) %>%
+  dplyr::summarise(across(everything(),mean, na.rm = TRUE)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-jj) %>%
+  bvn_to_simplex() %>%
+  mutate(
+    idx = 1:J,
+    type = "simple_mean",
+    Tr_L_sm = x_1,
+    Tr_U_sm = 1 - x_3
+  ) %>%
+  select(-c(x_1, x_2, x_3))
+
+
+# true parameters
+latent_truth_true <- data.frame(
+  idx = 1:J,
+  type = "true",
+  Tr_L_true = true_parameters$Tr_L,
+  Tr_U_true = true_parameters$Tr_U
+)
+
+df_interval_plot_ilr <- full_join(latent_truth_est_ilr, latent_truth_true) %>%
+  full_join(means_ilr) %>% 
+  mutate(type = factor(type, levels = c("estimated", "true")))
+```
+
+#### Interval Plot
+```{r message=FALSE, warning=FALSE}
+cols <- c("True" = "grey70","ITM (ILR)" = "red", "Mean" = "blue")
+
+df_interval_plot_ilr %>%
+  ggplot(aes(y = idx)) +
+    geom_errorbarh(
+    aes(xmin = Tr_L_true, xmax = Tr_U_true, col = "True"), 
+    height = 0,
+    linewidth = 5
+  ) +
+  geom_errorbarh(
+    aes(xmin = Tr_L_sm, xmax = Tr_U_sm, col = "Mean"),
+    height = 0,
+    linewidth = 3,
+    alpha = .4
+  ) +
+  geom_errorbarh(
+    aes(xmin = Tr_L_est, xmax = Tr_U_est, col = "ITM (ILR)"),
+    height = 0,
+    linewidth = 2,
+    alpha = .5
+    ) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = seq(0, 1, .25),
+    expand = expansion()
+  ) +
+    scale_y_discrete(
+    expand = expansion(add = 1)
+  ) +
+  scale_color_manual(values = cols) +
+  labs(x = "Latent Truth", y = "Item") +
+  theme_pubr() +
+  theme(plot.margin = margin(.1, .5, .1, .1, "cm"),
+        panel.grid.major = element_line())
+```
+
+# Prior vs. Posterior
+## True Intervals
+```{r}
+latent_truth <- data.frame(
+  Tr_loc_splx_post = fit_prior_check$draws("Tr_loc_splx") %>%
+    unlist() %>%
+    as.vector(),
+  Tr_wid_splx_post = fit_prior_check$draws("Tr_wid_splx") %>%
+    unlist() %>%
+    as.vector()
+) %>%
+  mutate(
+    jj = factor(rep(1:J, each = nrow(.) / J)),
+    Tr_wid_splx_prior = rbeta(nrow(.), 1.2, 3),
+    Tr_loc_splx_prior = (1 - Tr_wid_splx_prior) * rbeta(nrow(.), 1, 1) + Tr_wid_splx_prior / 2
+  )
+
+Tr_bvn <- simplex_to_bvn(
+  cbind(
+    latent_truth$Tr_loc_splx_prior - .5 * latent_truth$Tr_wid_splx_prior,
+    latent_truth$Tr_wid_splx_prior,
+    1 - (
+      latent_truth$Tr_loc_splx_prior + .5 * latent_truth$Tr_wid_splx_prior
+    )
+  )
+)
+latent_truth <- cbind(latent_truth,
+                      Tr_loc_prior = Tr_bvn[, 1], Tr_wid_prior = Tr_bvn[, 2])
+
+
+latent_truth %>%
+  ggplot() +
+  geom_abline(intercept = 0,
+              slope = 2,
+              alpha = .7) +
+  geom_abline(intercept = 2,
+              slope = -2,
+              alpha = .7) +
+  geom_density_2d_filled(
+    aes(x = Tr_loc_splx_prior, 
+        y = Tr_wid_splx_prior),
+    binwidth = .05, 
+    alpha = .3, ) +
+  geom_point(
+    aes(x = Tr_loc_splx_post, y = Tr_wid_splx_post, col = jj),
+    size = .3,
+    alpha = .3,
+    shape = 16
+  ) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  labs(x = "Location", y = "Width") +
+  # supress legends
+  guides(col = FALSE, fill = FALSE) +
+  theme_pubr()
+```
+
+
+## Hyper-Priors
+### sigma_lambda: Location
+```{r}
+colors <- c("prior" = "lightblue", "posterior" = "purple")
+
+sigma_lambda_loc <- data.frame(posterior = fit_prior_check$draws("sigma_J[1]", format = "list") %>% unlist() %>%  as.vector())
+sigma_lambda_loc$prior <- exp(rnorm(nrow(sigma_lambda_loc), log(.5), .5))
+
+sigma_lambda_loc %>%
+  ggplot() +
+  geom_density(aes(prior), fill = "lightblue", alpha = 1) +
+  geom_density(aes(exp(posterior * .5 + log(.5))), fill = "purple", alpha = .3) +
+  scale_x_continuous(limits = c(NA, 3), expand = expansion()) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Prior / Posterior", y = "Density") +
+  scale_color_manual(values = colors) +
+  theme_pubr()
+```
+
+### sigma_lambda: Width
+```{r}
+sigma_lambda_wid <- data.frame(
+  posterior = fit_prior_check$draws("sigma_J[2]", format = "list") %>% unlist() %>%  as.vector()
+)
+sigma_lambda_wid$prior <- exp(rnorm(nrow(sigma_lambda_loc), log(.5), .5))
+
+sigma_lambda_wid %>% 
+  ggplot() +
+  geom_density(
+    aes(prior),
+    fill = "lightblue",
+    alpha = 1  ) +
+  geom_density(aes(exp(posterior*.5+log(.5))),
+               fill = "purple",
+               alpha = .3
+               ) +
+  scale_x_continuous(
+    limits = c(NA, 3),
+    expand = expansion()
+  ) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Prior / Posterior", y = "Density") +
+  scale_color_manual(values = colors) +
+  theme_pubr()
+```
+
+### sigma_E: Location
+```{r}
+sigma_E_loc <- data.frame(
+  posterior = fit_prior_check$draws("sigma_I[1]", format = "list") %>% unlist() %>%  as.vector()
+)
+sigma_E_loc$prior <- exp(rnorm(nrow(sigma_lambda_loc), log(.5), .5))
+
+sigma_E_loc %>% 
+  ggplot() +
+  geom_density(
+    aes(prior),
+    fill = "lightblue",
+    alpha = 1  ) +
+  geom_density(aes(exp(posterior*.5+log(.5))),
+               fill = "purple",
+               alpha = .3
+               ) +
+  scale_x_continuous(
+    limits = c(NA, 3),
+    expand = expansion()
+  ) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Prior / Posterior", y = "Density") +
+  scale_color_manual(values = colors) +
+  theme_pubr()
+```
+
+### sigma_E: Width
+```{r}
+sigma_E_wid <- data.frame(
+  posterior = fit_prior_check$draws("sigma_I[2]", format = "list") %>% unlist() %>%  as.vector()
+)
+sigma_E_wid$prior <- exp(rnorm(nrow(sigma_lambda_loc), log(.5), .5))
+
+sigma_E_wid %>% 
+  ggplot() +
+  geom_density(
+    aes(prior),
+    fill = "lightblue",
+    alpha = 1  ) +
+  geom_density(aes(exp(posterior*.5+log(.5))),
+               fill = "purple",
+               alpha = .3
+               ) +
+  scale_x_continuous(
+    limits = c(NA, 3),
+    expand = expansion()
+  ) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Prior / Posterior", y = "Density") +
+  scale_color_manual(values = colors) +
+  theme_pubr()
+```
+
+### mu_E: Location
+```{r}
+mu_E_loc <- data.frame(
+  posterior = fit_prior_check$draws("mu_I[1]", format = "list") %>% unlist() %>%  as.vector()
+)
+mu_E_loc$prior <- rnorm(nrow(sigma_lambda_loc))
+
+mu_E_loc %>% 
+  ggplot() +
+  geom_density(
+    aes(prior),
+    fill = "lightblue",
+    alpha = 1  ) +
+  geom_density(aes(posterior),
+               fill = "purple",
+               alpha = .3
+               ) +
+  scale_x_continuous(
+    limits = c(-4, 4),
+    expand = expansion()
+  ) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Prior / Posterior", y = "Density") +
+  scale_color_manual(values = colors) +
+  theme_pubr()
+```
+
+### mu_E: Width
+```{r}
+mu_E_wid <- data.frame(
+  posterior = fit_prior_check$draws("mu_I[2]", format = "list") %>% unlist() %>%  as.vector()
+)
+mu_E_wid$prior <-  rnorm(nrow(sigma_lambda_loc))
+
+mu_E_wid %>% 
+  ggplot() +
+  geom_density(
+    aes(prior),
+    fill = "lightblue",
+    alpha = 1  ) +
+  geom_density(aes(posterior),
+               fill = "purple",
+               alpha = .3
+               ) +
+  scale_x_continuous(
+    limits = c(-4, 4),
+    expand = expansion()
+  ) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion()) +
+  labs(x = "Prior / Posterior", y = "Density") +
+  scale_color_manual(values = colors) +
+  theme_pubr()
+```
