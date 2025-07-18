@@ -57,9 +57,12 @@ data{
   array[N] int<lower=1> jj; // item indices
   array[N] int<lower=1> nn; // response indices
   array[N] simplex[3] Y_splx ; // DRS responses as simplex
+  real<lower=0,upper=1> padding; // padding constant used in zero handling; set to 0 if not applicable
 }
 //////////////////////////////////////////////////////////////////////////////// 
 transformed data {
+  // scale maximum for back transformation to simplex
+  real scale_max = 1 + padding * 3;
   // arrray to array
   array[N] vector[2] Y;
   for (n in 1:N){
@@ -224,11 +227,11 @@ model{
     Y_ppc_wid_splx = Y_ppc_splx[,2];
   } // end block
   
-  // Latent truth simplex
+  // Latent consensus simplex with reversed padding
   matrix[J,3] Tr_splx;
-  Tr_splx[,1] = Tr_splx_model[,1] .* 1.03 - 0.01;
-  Tr_splx[,2] = Tr_splx_model[,2] .* 1.03 - 0.01;
-  Tr_splx[,3] = Tr_splx_model[,3] .* 1.03 - 0.01;
+  Tr_splx[,1] = Tr_splx_model[,1] .* scale_max - padding;
+  Tr_splx[,2] = Tr_splx_model[,2] .* scale_max - padding;
+  Tr_splx[,3] = Tr_splx_model[,3] .* scale_max - padding;
   vector[J] Tr_loc_splx = Tr_splx[,1] + 0.5 .* Tr_splx[,2];
   vector[J] Tr_wid_splx = Tr_splx[,2];
 }

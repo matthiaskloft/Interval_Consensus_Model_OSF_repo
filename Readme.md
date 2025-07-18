@@ -78,7 +78,9 @@ dependencies using the `Dockerfile` and `Makefile`. RStudio Server can then be o
 (<http://localhost:8787>), and `05_sim_visualizations_v2.Qmd` can then be rerun.
 
 
-
+## Note
+In some places of the project, you might encounter the acronym ITM/itm, which stands for Interval Truth Model. 
+This is the former name of the model, which we changed to Interval Consensus Model (ICM) in the final version of the manuscript.
 
 
 

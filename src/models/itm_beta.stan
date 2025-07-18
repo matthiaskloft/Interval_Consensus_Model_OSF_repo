@@ -1,9 +1,9 @@
 //////////////////////////////////////////////////////////////////////////////// 
-// Interval Truth Model
+// Interval Consensus Model
 //////////////////////////////////////////////////////////////////////////////// 
 functions {
   // simplex to bivariate normal, array to matrix
-  matrix simplex_to_bvn(array[] vector Y_splx) {
+  matrix ilr(array[] vector Y_splx) {
     
     int N = size(Y_splx);
     matrix[N, 2] Y;
@@ -17,7 +17,7 @@ functions {
     return Y;
   }
   // simplex to bivariate normal, matrix to matrix
-  matrix simplex_to_bvn(matrix Y_splx) {
+  matrix ilr(matrix Y_splx) {
     
     int N = rows(Y_splx);
     matrix[N, 2] Y;
@@ -32,17 +32,19 @@ functions {
   }
   
     // bivariate normal to simplex, matrix to matrix
-    matrix bvn_to_simplex(matrix Y) {
+    matrix inv_ilr(matrix Y, real padding) {
     
     int N = rows(Y);
     matrix[N, 3] Y_splx;
+    // scale maximum for back transformation to simplex
+    real scale_max = 1 + padding * 3;
     
     vector[N] Sum = exp(sqrt(2) .* Y[,1]) + 
                     exp(sqrt(3.0/2) .* Y[,2] + Y[,1] ./ sqrt(2)) + 
                     1;
-    Y_splx[ ,1] = exp(sqrt(2) .* Y[,1])                        ./ Sum .* 1.03 - 0.01;
-    Y_splx[ ,2] = exp(sqrt(3.0/2) .* Y[,2] + Y[,1] ./ sqrt(2)) ./ Sum .* 1.03 - 0.01;
-    Y_splx[ ,3] = 1                                            ./ Sum .* 1.03 - 0.01;
+    Y_splx[ ,1] = exp(sqrt(2) .* Y[,1])                        ./ Sum .* scale_max - padding;
+    Y_splx[ ,2] = exp(sqrt(3.0/2) .* Y[,2] + Y[,1] ./ sqrt(2)) ./ Sum .* scale_max - padding;
+    Y_splx[ ,3] = 1                                            ./ Sum .* scale_max - padding;
     
     return Y_splx;
   }
@@ -57,9 +59,12 @@ data{
   array[N] int<lower=1> jj; // item indices
   array[N] int<lower=1> nn; // response indices
   array[N] simplex[3] Y_splx ; // DRS responses as simplex
+  real<lower=0,upper=1> padding; // padding constant used in zero handling; set to 0 if not applicable
 }
 //////////////////////////////////////////////////////////////////////////////// 
 transformed data {
+  // scale maximum for back transformation to simplex
+  real scale_max = 1 + padding * 3;
   // arrray to array
   array[N] vector[2] Y;
   for (n in 1:N){
@@ -99,8 +104,8 @@ transformed parameters{
   vector[I] b_wid; // shifting bias width
   // item parameters
   matrix[J,3] Tr_splx_model;
-  vector[J] Tr_loc; // latent truth location
-  vector[J] Tr_wid; // latent truth width
+  vector[J] Tr_loc; // latent consensus location
+  vector[J] Tr_wid; // latent consensus width
   vector[J] lambda_loc; // item difficulty / discernibility location
   vector[J] lambda_wid; // item difficulty / discernibility width
   // correlation residual
@@ -123,10 +128,10 @@ transformed parameters{
   Tr_splx_model[,2] = Tr_wid_beta;
   Tr_splx_model[,3] = 1 - Tr_splx_model[,1] - Tr_splx_model[,2];
   // transform simplex to bivariate normal
-  matrix[J,2] Tr_bvn = simplex_to_bvn(Tr_splx_model);
+  matrix[J,2] Tr_bvn = ilr(Tr_splx_model);
   // final bivariate locations and widths
-  Tr_loc             = Tr_bvn[,1];  // latent truth
-  Tr_wid             = Tr_bvn[,2];  // latent truth
+  Tr_loc             = Tr_bvn[,1];  // latent consensus
+  Tr_wid             = Tr_bvn[,2];  // latent consensus
   
   matrix[J,2] lambda_temp = (diag_pre_multiply(exp(sigma_lambda[1:2] * .5 + log(.5)), L_corr_lambda) * J_raw[ ,1:2]')';
   lambda_loc = exp(lambda_temp[,1]); // item difficulty / discernibility
@@ -223,16 +228,16 @@ model{
     // Posterior Predicted Values for unbounded location and width  
     Y_ppc_loc = Y_ppc[,1];
     Y_ppc_wid = Y_ppc[,2];
-    Y_ppc_splx = bvn_to_simplex(Y_ppc);
+    Y_ppc_splx = inv_ilr(Y_ppc, padding);
     Y_ppc_loc_splx = Y_ppc_splx[,1] + 0.5 .* Y_ppc_splx[,2];
     Y_ppc_wid_splx = Y_ppc_splx[,2];
   } // end block
   
-  // Latent truth simplex
+  // Latent consensus simplex with reversed padding
   matrix[J,3] Tr_splx;
-  Tr_splx[,1] = Tr_splx_model[,1] .* 1.03 - 0.01;
-  Tr_splx[,2] = Tr_splx_model[,2] .* 1.03 - 0.01;
-  Tr_splx[,3] = Tr_splx_model[,3] .* 1.03 - 0.01;
+  Tr_splx[,1] = Tr_splx_model[,1] .* scale_max - padding;
+  Tr_splx[,2] = Tr_splx_model[,2] .* scale_max - padding;
+  Tr_splx[,3] = Tr_splx_model[,3] .* scale_max - padding;
   vector[J] Tr_loc_splx = Tr_splx[,1] + 0.5 .* Tr_splx[,2];
   vector[J] Tr_wid_splx = Tr_splx[,2];
 }
