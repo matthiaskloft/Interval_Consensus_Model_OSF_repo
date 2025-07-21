@@ -11,7 +11,7 @@
 
 
 
-<title>Readme</title>
+<title>README</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -358,14 +358,13 @@ display: none;
 manuscript:</p>
 <blockquote>
 <p>Kloft, M., Siepe, B.S., Heck, D.W. (2024). The Interval Truth Model:
-A Consensus Model for Continuous Bounded Interval Responses.
-<TODO ADD LINK>.</p>
+A Consensus Model for Continuous Bounded Interval Responses. <a href="https://doi.org/10.31234/osf.io/dzvw2" class="uri">https://doi.org/10.31234/osf.io/dzvw2</a>.</p>
 </blockquote>
 <p>A BiBTeX entry for LaTeX users is:</p>
 <pre class="bibtex"><code>@article{Kloft2024,
   title={The Interval Truth Model: A Consensus Model for Continuous Bounded Interval Responses},
   author={Kloft, Matthias and Siepe, Bj{\&quot;o}rn S. and Heck, Daniel W.},
-  url={TODO},
+  url={https://doi.org/10.31234/osf.io/dzvw2},
   year={2024},
   note={PsyArXiv preprint}
 }</code></pre>
@@ -377,12 +376,18 @@ A Consensus Model for Continuous Bounded Interval Responses.
 </div>
 <div id="plots" class="section level3">
 <h3><code>plots/</code></h3>
-<p>This folder contains all plots used in the manuscript and in the
+<p>This folder contains plots used in the manuscript and in the
 supplementary material.</p>
 </div>
 <div id="sim_results" class="section level3">
 <h3><code>sim_results/</code></h3>
 <p>This folder contains the results of the simulation studies.</p>
+</div>
+<div id="fits" class="section level3">
+<h3><code>fits/</code></h3>
+<p>This folder contains saved model fits from the empirical analyses,
+including fitted Stan models for the verbal quantifiers dataset and
+sensitivity analyses.</p>
 </div>
 <div id="src" class="section level3">
 <h3><code>src/</code></h3>
@@ -411,23 +416,33 @@ using the isometric log-ratio transformation.</li>
 <li><code>01f_simulation_development_sb.Qmd</code>: Justification and
 visualization of the data generating parameters of the simulation study
 using the stick-breaking transformation.</li>
-<li><code>02_fit_model_verbal_quantifiers.Qmd</code>: TODO. The
-corresponding <code>.html</code> file shows a rendered version of the
-document.
+<li><code>02_fit_model_verbal_quantifiers.Qmd</code>: Empirical
+application of the Interval Truth Model to verbal quantifiers data,
+including model fitting, posterior analysis, and visualization of
+consensus intervals. The corresponding <code>.html</code> file shows a
+rendered version of the document.
 <ul>
 <li>Set <code>refit: true</code> in the YAML header if you want to refit
 all models upon rendering of the quarto markdown.</li>
 </ul></li>
 <li><code>03_illustrations_article.Qmd</code>: Script that renders
 illutrating plots from the article.</li>
-<li><code>04_prior_checks.Qmd</code>: Visualization of XXX. The
-corresponding <code>.html</code> file shows a rendered version of the
-document.</li>
+<li><code>04_prior_checks.Qmd</code>: Prior predictive checks and
+visualization of model priors to ensure reasonable model specification.
+The corresponding <code>.html</code> file shows a rendered version of
+the document.</li>
+<li><code>05_zero_handling_sensitivity_checks.Qmd</code>: Sensitivity
+analysis for handling zero values in interval responses and comparison
+of different approaches. The corresponding <code>.html</code> file shows
+a rendered version of the document.</li>
 </ul>
-<div id="srcsimulation_v1" class="section level4">
-<h4><code>src/simulation_v1</code></h4>
-<p>Contains code and results for the first version of the simulation
-study. See the manuscript for more details.</p>
+<div id="srcsimulation_v1_v2" class="section level4">
+<h4><code>src/simulation_v1_v2/</code></h4>
+<p>Contains code and results for both versions of the simulation study:
+- <strong>v1</strong>: First version of the simulation study with
+initial parameter settings - <strong>v2</strong>: Updated simulation
+study with refined parameters and additional analyses See the manuscript
+for more details on the differences between versions.</p>
 </div>
 <div id="srcmodels" class="section level4">
 <h4><code>src/models</code></h4>
@@ -435,14 +450,98 @@ study. See the manuscript for more details.</p>
 <ul>
 <li><code>itm_simulation_v2_beta.stan</code>: Stan model for the main
 simulation study (version 2).</li>
-<li>``: Generic Stan model using the beta prior on the latent consensus
-intervals</li>
-<li>``: Generic Stan model using the Dirichlet prior on the latent
-consensus intervals</li>
-<li>``: Custom Stan model for the empirical dataset of verbal
-quantifiers</li>
+<li><code>itm_beta.stan</code>: Generic Stan model using the beta prior
+on the latent consensus intervals</li>
+<li><code>itm_dirichlet.stan</code>: Generic Stan model using the
+Dirichlet prior on the latent consensus intervals</li>
+<li><code>itm_quantifier_beta.stan</code>: Custom Stan model for the
+empirical dataset of verbal quantifiers</li>
 </ul>
 </div>
+</div>
+</div>
+<div id="supplementary-materials-guide" class="section level2">
+<h2>Supplementary Materials Guide</h2>
+<p>This section provides a mapping between supplementary materials
+mentioned in the manuscript and their locations in this repository.
+Materials are organized by manuscript section for easy navigation.</p>
+<div id="introduction-theory-sections-1-2" class="section level3">
+<h3>Introduction &amp; Theory (Sections 1-2)</h3>
+<p><strong>Parameter Illustrations &amp; Theory:</strong> - Parameter
+illustration figures → <code>plots/icm_parameter_illustration.pdf</code>
+- Logit transformation illustration →
+<code>plots/logit_illustration.pdf</code></p>
+<p><strong>Prior Distributions &amp; Sensitivity Analysis:</strong> -
+Prior predictive checks → <code>src/04_prior_checks.Qmd</code> and
+<code>src/04_prior_checks.html</code> - Sensitivity analysis for
+zero-handling → <code>src/05_zero_handling_sensitivity_checks.Qmd</code>
+and <code>src/05_zero_handling_sensitivity_checks.html</code> -
+Alternative Dirichlet prior implementation →
+<code>src/models/itm_dirichlet.stan</code></p>
+</div>
+<div id="simulation-study-section-3" class="section level3">
+<h3>Simulation Study (Section 3)</h3>
+<p><strong>Main Simulation Study:</strong> - Simulation code →
+<code>src/01a_simulation_study_final_rev1.Rmd</code> - Simulation
+results → <code>sim_results/sim_results_itm_2024-09-07_07-27-33/</code>
+- Simulation visualizations →
+<code>src/01b_sim_visualizations_rev1.Qmd</code> and
+<code>src/01b_sim_visualizations_rev1.html</code></p>
+<p><strong>Link Function Study:</strong> - Link function simulation →
+<code>src/01c_simulation_study_link_functions_final.Rmd</code> - Link
+function results →
+<code>sim_results/sim_res_link_function_2024-08-09_07-38-27/</code> -
+Link function visualizations →
+<code>src/01d_sim_link_functions_visualizations.Qmd</code> and
+<code>src/01d_sim_link_functions_visualizations.html</code></p>
+<p><strong>Simulation Plots &amp; Analysis:</strong> - Main simulation
+plots → <code>plots/sim_main/</code> (bias, MSE, scatterplots) - Link
+function plots → <code>plots/sim_link_function/</code> - Joint bias
+plots → <code>plots/sim_main/sim_absbias_widloc_comb.pdf</code> - Raw
+estimation results →
+<code>plots/sim_main/raw_ests_boxplot.pdf</code></p>
+<p><strong>Parameter Development &amp; Justification:</strong> - ILR
+transformation development →
+<code>src/01e_simulation_development_ilr.Qmd</code> and
+<code>src/01e_simulation_development_ilr.html</code> - Stick-breaking
+transformation development →
+<code>src/01f_simulation_development_sb.Qmd</code> and
+<code>src/01f_simulation_development_sb.html</code></p>
+</div>
+<div id="empirical-example-section-4" class="section level3">
+<h3>Empirical Example (Section 4)</h3>
+<p><strong>Main Empirical Analysis:</strong> - Full analysis code →
+<code>src/02_fit_model_verbal_quantifiers.Qmd</code> - Rendered analysis
+report → <code>src/02_fit_model_verbal_quantifiers.html</code> - Model
+fits → <code>fits/itm_quantifier_beta_custom_fit.RDS</code> and related
+files</p>
+<p><strong>Empirical Plots &amp; Results:</strong> - Consensus intervals
+plots →
+<code>plots/empirical_example/consensus_intervals_custom_model.pdf</code>
+- Prior vs. posterior comparison →
+<code>plots/empirical_example/prior_vs_posterior_quantifiers_selection.pdf</code>
+- All verbal quantifier densities →
+<code>plots/empirical_example/verbal_quantifier_densities_all.pdf</code>
+- Example quantifier plots →
+<code>plots/empirical_example/verbal_quantifier_densities_example.pdf</code>
+- Proficiency analysis →
+<code>plots/empirical_example/proficiency_vs_intervals.pdf</code></p>
+<p><strong>Sensitivity Analyses:</strong> - Zero-handling comparison →
+<code>plots/comparison_zero_handling_empirical.pdf</code> - Consensus
+intervals sensitivity →
+<code>plots/consensus_intervals_sensitivity.pdf</code></p>
+</div>
+<div id="technical-implementation" class="section level3">
+<h3>Technical Implementation</h3>
+<p><strong>Stan Models:</strong> - Main simulation model →
+<code>src/models/itm_simulation_v2_beta.stan</code> - Generic models →
+<code>src/models/itm_beta.stan</code>,
+<code>src/models/itm_dirichlet.stan</code> - Empirical analysis model →
+<code>src/models/itm_quantifier_beta.stan</code></p>
+<p><strong>Session Information &amp; Package Versions:</strong> -
+Session info provided in rendered HTML reports (<code>.html</code>
+files) - Computational environment details included in analysis
+outputs</p>
 </div>
 </div>
 <div id="reproducing-our-results" class="section level2">
@@ -457,15 +556,8 @@ Docker container:</p>
 <p>Run <code>make docker</code> from the root directory of this git
 repository. This will install all necessary dependencies using the
 <code>Dockerfile</code> and <code>Makefile</code>. RStudio Server can
-then be opened from a browser (<a href="http://localhost:8787" class="uri">http://localhost:8787</a>), and
-<code>05_sim_visualizations_v2.Qmd</code> can then be rerun.</p>
-</div>
-<div id="note" class="section level2">
-<h2>Note</h2>
-<p>In some places of the project, you might encounter the acronym
-ITM/itm, which stands for Interval Truth Model. This is the former name
-of the model, which we changed to Interval Consensus Model (ICM) in the
-final version of the manuscript.</p>
+then be opened from a browser (<a href="http://localhost:8787" class="uri">http://localhost:8787</a>), and the analysis documents can
+then be rerun.</p>
 </div>
 </div>
 
