@@ -12,5 +12,7 @@ file <- osf_ls_files(project, verbose = TRUE)
 # download
 osf_download(file, conflicts = "overwrite", verbose = TRUE)
 # unzip packaged files
-unzip(here("fits_and_sim_results.zip"), overwrite = TRUE)
-unlink(here("fits_and_sim_results.zip"))
+unzip(here("fits.zip"), overwrite = TRUE)
+unlink(here("fits.zip"))
+unzip(here("sim_results.zip"), overwrite = TRUE)
+unlink(here("sim_results.zip"))

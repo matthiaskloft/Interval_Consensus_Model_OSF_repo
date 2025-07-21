@@ -195,7 +195,7 @@ bvn_to_simplex <- function(bvn, type = "ilr") {
 #------------------------------------------------------------------------------>
 
 # Generate interval data for one respondent (for illustration plots)
-generate_itm_one_respondent <- function(
+generate_icm_one_respondent <- function(n_items = 1,
                                         Tr_loc,
                                         Tr_wid,
                                         lambda_loc,
@@ -299,11 +299,11 @@ generate_itm_data_sim_study <-
     mu_Tr_loc <- ifelse(is.null(mu_Tr_loc), mean_benchmark[1], mu_Tr_loc)
     # mean for Tr_wid
     mu_Tr_wid <- ifelse(is.null(mu_Tr_wid), mean_benchmark[2], mu_Tr_wid)
-    # SD forTr_loc
+    # SD for Tr_loc
     sigma_Tr_loc <- ifelse(is.null(sigma_Tr_loc), 
                            sd_benchmark_loc[1] / 4, 
                            sigma_Tr_loc)
-    # SD Tr_wid
+    # SD for Tr_wid
     sigma_Tr_wid <- ifelse(is.null(sigma_Tr_wid),
                            abs(sd_benchmark_wid[2] - mean_benchmark[2]) / 4, 
                            sigma_Tr_wid)
@@ -442,6 +442,27 @@ generate_itm_data_sim_study <-
     return(sim_data)
   }
 
+
+# Transform standard deviation from variance to precision scale --------------->
+
+# Computes standard deviation of X = 1/Y, where Y is log-normally distributed
+# with mean = m and standard deviation = s
+
+sd_inverse_lognormal <- function(m, s) {
+  # Step 1: Convert (m, s) to log-normal parameters (mu, sigma)
+  sigma2 <- log(1 + (s^2 / m^2))
+  sigma <- sqrt(sigma2)
+  mu <- log(m) - 0.5 * sigma2
+  
+  # Step 2: Compute mean and standard deviation of X = 1/Y
+  mean_x <- exp(-mu + 0.5 * sigma2)
+  std_x <- mean_x * sqrt(exp(sigma2) - 1)
+  
+  return(std_x)
+}
+
+
+
 #------------------------------------------------------------------------------>
 # Plotting Functions
 #------------------------------------------------------------------------------>
@@ -477,7 +498,7 @@ plot_example_2Dscatter <- function(data) {
     scale_x_continuous(limits = c(-5, 5), breaks = seq(-3, 3, 3)) +
     scale_y_continuous(limits = c(-6, 4), breaks = seq(-3, 3, 3)) +
     labs(x = "Unbounded Location", y = "Unbounded Width") +
-    theme_itm() +
+    theme_icm() +
     theme(panel.grid = element_blank(), 
           axis.text = element_text(size = 10),
           axis.line = element_line(colour = "#6d6d6e", size = .3),
@@ -522,7 +543,7 @@ plot_example_intervals <- function(data) {
     ) +
     scale_y_continuous(expand = expansion(0, .2)) +
     labs(x = "Bounded Response Scale", y = "Item Index") +
-    theme_itm() +
+    theme_icm() +
     theme(
       panel.grid = element_blank(),
       axis.line = element_line(colour = "#6d6d6e", size = .3),
@@ -638,7 +659,7 @@ ggplot_aggregated_single <-
         stat = "bin",
         color = "black", fill = "gray95", binwidth = binwidth, linewidth = .7
       ) +
-      ggplot2::geom_vline(aes(xintercept = truth), color = ggokabeito::palette_okabe_ito(order = 1), line_width = 1) +
+      ggplot2::geom_vline(aes(xintercept = truth), color = ggokabeito::palette_okabe_ito(order = 1), linewidth = 1) +
       ggplot2::geom_errorbarh(
         ggplot2::aes(
           xmin = lower_mean_logit,
@@ -671,7 +692,7 @@ ggplot_aggregated_single <-
       ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, .05))) +
       ggplot2::labs(x = "Response Value",
                     y = "Cumulative Pointwise Frequency") +
-      theme_itm() +
+      theme_icm() +
       theme(
         plot.margin = margin(.2, .5, .2, .2, "cm"),
         panel.grid = element_blank(),
@@ -727,7 +748,10 @@ ggplot_aggregated_single <-
 # Import location and width estimates
 prep_locwid <- function(path,
                         # also obtain simplemeans?
-                        simplemeans = FALSE){
+                        simplemeans = FALSE,
+                        # also obtain simplemedians?
+                        simplemedians = FALSE
+                        ){
   # list all rds files
   rds_files <- list.files(path, pattern = ".rds", full.names = TRUE)
   
@@ -740,17 +764,22 @@ prep_locwid <- function(path,
                                summary,
                                pm) {
     tmp_summary <- sapply(res$results, function(x) {
-      if(method == "model") {  
+      if (method == "model") {
         x$fit_summary |>
-          dplyr::filter(!grepl("_beta", variable)) |> 
-          dplyr::filter(!grepl("_splx", variable)) |> 
-          dplyr::filter(stringr::str_detect(variable,
-                                            # ensure that it is at the beginning of the string
-                                            # to avoid issues with a_loc and lambda_loc
-                                            paste0("^", estimate_name))) |>
+          dplyr::filter(!grepl("_beta", variable)) |>
+          dplyr::filter(!grepl("_splx", variable)) |>
+          dplyr::filter(stringr::str_detect(
+            variable,
+            # ensure that it is at the beginning of the string
+            # to avoid issues with a_loc and lambda_loc
+            paste0("^", estimate_name)
+          )) |>
           dplyr::select(all_of({{summary}}))
-      } else if(method == "simple") {
+      } else if (method == "simplemeans") {
         x$simple_means |>
+          dplyr::select(all_of({{estimate_name}}))
+      } else if (method == "simplemedians") {
+        x$simple_medians |>
           dplyr::select(all_of({{estimate_name}}))
       }})
     # compare against true parameters
@@ -774,60 +803,82 @@ prep_locwid <- function(path,
   
   l_out <- list()
   
-  # loop over files to read them in, extracts estimates, computes bias 
-  for(i in 1:length(rds_files)){
-    # read in rds file
+  # loop over files to read them in, extracts estimates, computes bias
+  for (i in seq_along(rds_files)) {
     res <- readRDS(rds_files[i])
     
-    # compute inidividual biases
-    loc_bias <- point_comparison(res = res,
-                                 method = "model",
-                                 estimate_name = "Tr_loc",
-                                 truth_name = "Tr_loc",
-                                 summary = "mean",
-                                 pm = fn_abs_bias)
-    wid_bias <- point_comparison(res = res,
-                                 method = "model",
-                                 estimate_name = "Tr_wid",
-                                 truth_name = "Tr_wid",
-                                 summary = "mean",
-                                 pm = fn_abs_bias)
+    # model-based bias
+    loc_bias <- point_comparison(
+      res,
+      method = "model",
+      estimate_name = "Tr_loc",
+      truth_name = "Tr_loc",
+      summary = "mean",
+      pm = fn_abs_bias
+    )
+    wid_bias <- point_comparison(
+      res,
+      method = "model",
+      estimate_name = "Tr_wid",
+      truth_name = "Tr_wid",
+      summary = "mean",
+      pm = fn_abs_bias
+    )
     
-    if(isTRUE(simplemeans)){
-      smloc_bias <- point_comparison(res = res,
-                                     method = "simple",
-                                     estimate_name = "simplemean_loc",
-                                     truth_name = "Tr_loc",
-                                     summary = "mean",
-                                     pm = fn_abs_bias)
-      smwid_bias <- point_comparison(res = res,
-                                     method = "simple",
-                                     estimate_name = "simplemean_wid",
-                                     truth_name = "Tr_wid",
-                                     summary = "mean",
-                                     pm = fn_abs_bias)
+    # initialize output row
+    df_row <- data.frame(
+      loc_bias = unlist(loc_bias),
+      wid_bias = unlist(wid_bias),
+      iteration = rep(i, length(loc_bias))
+    )
+    
+    # optionally compute and add simplemeans
+    if (isTRUE(simplemeans)) {
+      smloc_bias <- point_comparison(
+        res,
+        method = "simplemeans",
+        estimate_name = "simplemean_loc",
+        truth_name = "Tr_loc",
+        summary = "mean",
+        pm = fn_abs_bias
+      )
+      smwid_bias <- point_comparison(
+        res,
+        method = "simplemeans",
+        estimate_name = "simplemean_wid",
+        truth_name = "Tr_wid",
+        summary = "mean",
+        pm = fn_abs_bias
+      )
+      df_row$smloc_bias <- unlist(smloc_bias)
+      df_row$smwid_bias <- unlist(smwid_bias)
     }
     
-    
-    if(isTRUE(simplemeans)){
-      l_out[[i]] <- data.frame(loc_bias = unlist(loc_bias),
-                               wid_bias = unlist(wid_bias),
-                               smloc_bias = unlist(smloc_bias),
-                               smwid_bias = unlist(smwid_bias),
-                               iteration = rep(i, length(loc_bias)))
+    # optionally compute and add simplemedians
+    if (isTRUE(simplemedians)) {
+      smmloc_bias <- point_comparison(
+        res,
+        method = "simplemedians",
+        estimate_name = "simplemed_loc",
+        truth_name = "Tr_loc",
+        summary = "mean",
+        pm = fn_abs_bias
+      )
+      smmwid_bias <- point_comparison(
+        res,
+        method = "simplemedians",
+        estimate_name = "simplemed_wid",
+        truth_name = "Tr_wid",
+        summary = "mean",
+        pm = fn_abs_bias
+      )
+      df_row$smmloc_bias <- unlist(smmloc_bias)
+      df_row$smmwid_bias <- unlist(smmwid_bias)
     }
-    else{
-      # combine into a data frame
-      l_out[[i]] <- data.frame(loc_bias = unlist(loc_bias),
-                               wid_bias = unlist(wid_bias),
-                               iteration = rep(i, length(loc_bias)))
-    }
     
-    
-    
-    
+    l_out[[i]] <- df_row
   }
-  # combine all data frames
+  
   out <- do.call(rbind, l_out)
   return(out)
   
@@ -836,7 +887,7 @@ prep_locwid <- function(path,
 
 # Create common theme for all plots ---------------------------------------
 
-theme_itm <- function(hide_axis_text_y = FALSE,
+theme_icm <- function(hide_axis_text_y = FALSE,
                       base_size = 12) {
   showtext_auto()
   # theme
@@ -853,7 +904,7 @@ theme_itm <- function(hide_axis_text_y = FALSE,
         size = ggplot2::rel(1.25),
         hjust = 0.5
       ),
-      plot.subtitle = ggplot2::element_text(size = ggplot2::rel(1.3), hjust = 0.5),
+      plot.subtitle = ggplot2::element_text(size = ggplot2::rel(1.1), hjust = 0.5),
       axis.text.x = ggplot2::element_text(face = "plain", size = ggplot2::rel(1.1)),
       axis.text.y = ggplot2::element_text(face = "plain", size = ggplot2::rel(1.1)),
       axis.title.x = ggplot2::element_text(face = "plain", size = ggplot2::rel(1.25)),

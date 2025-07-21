@@ -81,7 +81,13 @@ showtext::showtext_auto()
 
 Load data:
 ```{r}
-sim_res_link <- readRDS(here("sim_results", "sim_res_link_function_server.rds"))
+sim_res_link <- readRDS(
+  here(
+    "sim_results",
+    "sim_res_link_function_2024-08-09_07-38-27",
+    "sim_res_link_function.rds"
+  )
+)
 ```
 
 
@@ -172,8 +178,8 @@ plot_sim_relbias <- sim_res_itm_long |>
                      axes = TRUE) +
   scale_y_continuous(limits = c(0, NA), expand = expansion()) +
   ggokabeito::scale_color_okabe_ito(order = c(5, 1)) +
-  labs(x = "Number of Respondents", y = "Relative Bias", color = "") +
-  theme_itm() +
+  labs(x = "Model", y = "Relative Bias", color = "") +
+  theme_icm() +
   theme(
     legend.position = "top",
     legend.text = element_text(size = 16),
@@ -182,13 +188,13 @@ plot_sim_relbias <- sim_res_itm_long |>
 
 plot_sim_relbias
 
-# ggsave(
-#   here("plots", "sim_link_function", "sim_lf_relbias.pdf"),
-#   plot_sim_relbias,
-#   width = 15,
-#   height = 20,
-#   units = "cm"
-# )
+ggsave(
+  plot_sim_relbias,
+  filename = here("plots", "sim_link_function", "sim_link_relbias.pdf"),
+  width = 10,
+  height = 7,
+  dpi = 300
+)
 ```
 
 
@@ -235,24 +241,23 @@ plot_sim_absbias <-
                      axes = TRUE) +
   scale_y_continuous(limits = c(0, NA), expand = expansion()) +
   ggokabeito::scale_color_okabe_ito(order = c(5, 1)) +
-  labs(x = "Number of Respondents", y = "Absolute Bias", color = "") +
-  theme_itm() +
+  labs(x = "Model", y = "Absolute Bias", color = "") +
+  theme_icm() +
   theme(
     legend.position = "top",
     legend.text = element_text(size = 16),
     text = element_text(size = 22)
   )
 
-
-
-# ggsave(
-#   here("plots", "sim_link_function", "sim_lf_absbias.pdf"),
-#   plot_sim_absbias,
-#   width = 15,
-#   height = 20,
-#   units = "cm"
-# )
 plot_sim_absbias
+
+ggsave(
+  plot_sim_absbias,
+  filename = here("plots", "sim_link_function", "sim_link_absbias.pdf"),
+  width = 10,
+  height = 7,
+  dpi = 300
+)
 ```
 
 

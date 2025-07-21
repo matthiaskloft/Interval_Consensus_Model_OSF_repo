@@ -1,0 +1,854 @@
+---
+title: "Interval Truth Model"
+subtitle: "Visualizations of Main Simulation Study"
+author: 
+ - name: Matthias Kloft
+   orcid: 0000-0003-1845-6957
+   affiliations: University of Marburg  
+ - name: Björn S. Siepe
+   orcid: 0000-0002-9558-4648
+   affiliations: University of Marburg
+ - name: Daniel W. Heck
+   orcid: 0000-0002-6302-9252
+   affiliations: University of Marburg
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-tools: true
+    code-summary: "Show the code"
+    fig-width: 7
+    fig-height: 4.5
+    embed-resources: true
+execute:
+  message: false
+  warning: false
+---
+
+# Background
+This file contains the visualizations of the simulation study for the Interval Truth Model.
+The results of the preliminary simulation study on the two different link functions can be found in the file `src/05_sim_link_functions_visualizations.Qmd`. 
+
+All errorbars in this document represent $\pm 1$ Monte Carlo Standard Errors.
+
+# Prep
+
+
+We first load all relevant packages: 
+
+```{r load-pkgs}
+packages <- c(
+  "tidyverse",
+  "SimDesign",
+  "here",
+  "psych",
+  "ggh4x",
+  "ggokabeito",
+  "ggExtra",
+  "showtext",
+  "ggdist",
+  "pander",
+  "sysfonts"
+)
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(packages, update = F, character.only = T)
+
+if(!require("cmdstanr")){
+  install.packages("cmdstanr", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+  library(cmdstanr)
+}
+  
+
+# default chunk options
+knitr::opts_chunk$set(
+  fig.height = 7,
+  fig.width = 10,
+  include = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+source(here("src", "00_functions.R"))
+
+# add google font
+sysfonts::font_add_google("News Cycle", "news")
+# use showtext
+showtext::showtext_auto()
+```
+
+As the true locations and width have slightly different standard deviations, we can use these to standardize performance meausures for ease of interpretability. 
+Obtain the SDs from the data-generation function:
+```{r}
+link <- "ilr"
+mean_benchmark <- simplex_to_bvn(c(.4, .2, .4), type = link)
+sd_benchmark_loc <- simplex_to_bvn(c(.98, .01, .01), type = link)
+sd_benchmark_wid <- simplex_to_bvn(c(.495, .01, .495), type = link)
+    
+# mean for Tr_loc
+mu_Tr_loc <- mean_benchmark[1]
+
+# mean for Tr_wid
+mu_Tr_wid <- mean_benchmark[2]
+    
+# SD forTr_loc
+sigma_Tr_loc <- sd_benchmark_loc[1] / 4 
+    
+# SD Tr_wid
+sigma_Tr_wid <- abs(sd_benchmark_wid[2] - mean_benchmark[2]) / 4
+```
+
+
+
+
+# Results
+
+The full results of the simulation study are available in two data frames: 
+
+- `sim_res_itm_server.rds`: Results of the simulation study, missing some MSE results due to a small coding error, but containing all information about seed, RAM usage, etc.
+- `sim_res_itm_0808.rds`: Resummarized results of the simulation study, now also containing all MSE results as well as more information on divergent transitions.
+```{r}
+sim_res_itm <- readRDS(
+  here(
+    "sim_results",
+    "sim_results_itm_2024-09-07_07-27-33",
+    "resummarized_results_itm.rds"
+  )
+)
+```
+
+
+Prepare data and convert to long format for plotting: 
+```{r}
+sim_res_itm_long <- sim_res_itm |> 
+  select(!c(contains("conv"), contains("divtrans"), contains("_sd"))) |> 
+  # the following columns aren't needed any more for the "resummarized" results
+            # "REPLICATIONS", "SIM_TIME", "RAM_USED", "SEED", "COMPLETED", "WARNINGS")) |>
+  # delete "_fn_" from every column name
+  rename_all(~str_remove(., "_fn")) |>
+  pivot_longer(cols = !c(n_respondents, n_items),
+               names_to = "measure", 
+               values_to = "value") |> 
+  # rename for easier separation
+  mutate(measure = str_replace(measure, "abs_bias", "absbias")) |> 
+  # add string so that each measure has same number of underscores
+  mutate(measure = str_replace(measure, "omega", "omega_cor")) |> 
+  # remove only the first underscore
+  mutate(measure = sub("_", "", measure, fixed = TRUE)) |> 
+  separate_wider_delim(measure, 
+                       names = c("measure", "summary", "pm", "param"), 
+                       delim = "_") |> 
+  group_by(n_respondents, n_items, measure, summary, pm) |> 
+  pivot_wider(names_from = "param", values_from = "value") |> 
+  ungroup() |> 
+  mutate(n_respondents = factor(n_respondents))
+  
+```
+
+
+## Convergence and Rhat
+
+We now present the average convergence statistics. All values are averages over all replications. A performance measure with a $>$ or a $<$ indicates how many out of 1000 replications had a certain property. For example, $\hat{R} < 1.1$ means that on average, a certain amount of replications had an $\hat{R}$ value below 1.1.
+```{r}
+# Renaming for the table
+name_mapping <- c(
+  "rhat_mean" = "$\\hat{R}_{\\text{mean}}$",
+  "rhat_prop1c1" = "$\\hat{R} < 1.1$",
+  "rhat_prop1c05" = "$\\hat{R} < 1.05$",
+  "rhat_prop1c01" = "$\\hat{R} < 1.01$",
+  "ess_bulk_mean" = "$\\text{ESS}_{\\text{bulk, mean}}$",
+  "ess_bulk_prop100" = "$\\text{ESS}_{\\text{bulk > 100}}$",
+  "ess_bulk_prop200" = "$\\text{ESS}_{\\text{bulk > 200}}$",
+  "ess_bulk_prop300" = "$\\text{ESS}_{\\text{bulk > 300}}$",
+  "ess_bulk_prop400" = "$\\text{ESS}_{\\text{bulk > 400}}$",
+  "ess_tail_mean" = "$\\text{ESS}_{\\text{tail, mean}}$",
+  "ess_tail_prop100" = "$\\text{ESS}_{\\text{tail > 100}}$",
+  "ess_tail_prop200" = "$\\text{ESS}_{\\text{tail > 200}}$",
+  "ess_tail_prop300" = "$\\text{ESS}_{\\text{tail > 300}}$",
+  "ess_tail_prop400" = "$\\text{ESS}_{\\text{tail > 400}}$"
+)
+
+sim_res_itm |>
+  dplyr::select(contains("conv")) |>
+  summarize(across(everything(), mean)) |> 
+  # remove "mean_conv." from every column name
+  rename_all(~str_remove(., "mean_conv.")) |>
+  rename_all(~str_remove(., "mcse_conv.")) |> 
+  pivot_longer(cols = everything()) |> 
+  # separate mean and mcse based on last underscore
+  separate(name, into = c("name", "suffix"), sep = "_(?=[^_]+$)", remove = FALSE) |> 
+  pivot_wider(names_from = suffix, values_from = value) |> 
+  mutate(mean = round(mean, 4), 
+         mcse = round(mcse, 4)) |> 
+  mutate(name = name_mapping[name]) |> 
+  knitr::kable()
+```
+
+The divergent transitions are shown in the table below. For purposes of readability, we omit the MCSEs here. 
+```{r}
+sim_res_itm |>
+  dplyr::select(contains("divtrans")) |>
+  dplyr::select(-contains("mcse")) |> 
+  rename(
+    "Mean DivTrans (all)" = "mean_divtrans.divergent_transitions_mean",
+    "Proportion with DivTrans" = "nonz_divtrans.divergent_transitions_nonzero",
+    "Mean DivTrans (models with any DivTrans)" = "nonzmean_divtrans.divergent_transitionsnonzero_mean"
+  ) |> 
+  round(3) |> 
+  knitr::kable()
+```
+
+
+
+Check if our prespecified MCSE criteria ($<.05$) was fulfilled in all conditions:
+```{r}
+sim_res_itm |> 
+  dplyr::select(all_of(contains("mcse"))) |> 
+  dplyr::select(all_of(contains("bias"))) |> 
+  summarize(across(everything(), max)) |> 
+  pivot_longer(cols = everything()) |> 
+  knitr::kable()
+```
+
+
+
+
+## Visualization
+
+### Absolute Bias of True Location + Width
+
+
+#### Combined AbsBias
+Here, we show the absolute bias of the true location and width for the different sample sizes and number of items. 
+
+```{r}
+plot_sim_absbias <- sim_res_itm_long |>
+  filter(pm == "absbias") |>
+  filter(summary == "mean") |> 
+  filter(measure %in% c("Trinterval", "simplemeaninterval")) |> 
+  mutate(measure = case_when(
+    measure == "Trinterval" ~ "ITM",
+    measure == "simplemeaninterval" ~ "Simple Means"
+  )) |>
+  mutate(n_items = paste0(n_items, " Items")) |> 
+  # order n_items correctly
+  mutate(n_items = factor(n_items, levels = c("5 Items", 
+                                              "10 Items", 
+                                              "20 Items",
+                                              "40 Items"))) |>
+  ggplot(aes(x = n_respondents, 
+             y = mean, 
+             color = measure,
+             group = measure)) +
+  # add vertical line between different sample sizes
+  geom_vline(colour = "#F3F4F5", xintercept = seq(1.5, 4, 1))+
+  geom_point(position = position_dodge(0.7), 
+             size = 2.5) +
+  geom_errorbar(aes(ymin = mean - 1*mcse,
+                            ymax = mean + 1*mcse),
+                        width = 0.95,
+                 position = position_dodge(0.7),
+                 show.legend = FALSE)+
+  ggh4x::facet_wrap2(n_items ~ .,
+                     axes = "all",
+                     nrow = 1) +
+  scale_y_continuous(limits = c(0, .49), expand = c(0,0)) +
+  ggokabeito::scale_color_okabe_ito(order = c(5, 1))+
+  labs(x = "Number of Respondents",
+       y = "Absolute Bias",
+       color = "") +
+  theme_icm()+
+  theme(legend.position = "top",
+        text = element_text(size= 22))
+  # For manuscript plot:
+  # theme(legend.position = "top",
+  #       text = element_text(size = 14),
+  #       axis.text.x = element_text(size = 13, margin = margin(b = 10)),
+  #       axis.text.y = element_text(size = 13, margin = margin(l = 10)),
+  #       legend.text = element_text(size = 15.5))
+
+# ggsave(here("plots","sim_main", "sim_absbias.pdf"),
+#        plot_sim_absbias, width = 9, height = 4.5)
+
+plot_sim_absbias
+```
+
+
+#### Separate AbsBias
+Here, we focus on the ITM and separate the bias by location and width. 
+```{r}
+plot_sim_bias_widloc <- sim_res_itm_long |>
+  filter(pm == "absbias") |>
+  filter(summary == "mean") |> 
+  filter(measure %in% c("Trloc", "Trwid")) |> 
+  mutate(measure = case_when(
+    measure == "Trloc" ~ "Location",
+    measure == "Trwid" ~ "Width"
+  )) |>
+  mutate(n_items = paste0(n_items, " Items")) |> 
+  # order n_items correctly
+  mutate(n_items = factor(n_items, levels = c("5 Items", 
+                                              "10 Items", 
+                                              "20 Items",
+                                              "40 Items"))) |>
+  # # Standardize with true variability
+  # mutate(mean = if_else(measure == "Location", 
+  #                       mean / sigma_Tr_loc,
+  #                       mean / sigma_Tr_wid
+  #                       ),
+  #        mcse = if_else(measure == "Location", 
+  #                       mcse / sigma_Tr_loc,
+  #                       mcse / sigma_Tr_wid
+  #                       )) |> 
+  ggplot(aes(x = n_respondents, 
+             y = mean, 
+             color = measure,
+             group = measure)) +
+  # add vertical line between different sample sizes
+  geom_vline(colour = "#F3F4F5", xintercept = seq(1.5, 4, 1))+
+  geom_point(position = position_dodge(0.7), 
+             size = 2.5) +
+  geom_errorbar(aes(ymin = mean - 1*mcse,
+                            ymax = mean + 1*mcse),
+                        width = .8,
+                 position = position_dodge(0.7),
+                 show.legend = FALSE)+
+  ggh4x::facet_wrap2(n_items ~ .,
+                     axes = "all",
+                     nrow = 1) +
+  scale_y_continuous(limits = c(0, 0.31), expand = c(0,0)) +
+  ggokabeito::scale_color_okabe_ito(order = c(2, 7))+
+  labs(x = "Number of Respondents",
+       y = "Absolute Bias",
+       color = "") +
+  theme_icm()+
+  theme(legend.position = "top",
+        text = element_text(size = 28))
+
+# ggsave(here("plots","sim_main", "sim_absbias_widloc.pdf"),
+#        plot_sim_bias_widloc, width = 7, height = 3.75)
+
+plot_sim_bias_widloc
+```
+
+
+Alternatively, combine plots for location and width:
+```{r}
+plot_sim_absbias_widloc_comb <- sim_res_itm_long |>
+  filter(pm == "absbias") |>
+  filter(summary == "mean") |>
+  filter(measure %in% c("Trloc", "Trwid", "simplemeanloc", "simplemeanwid")) |>
+  # split based on model
+  mutate(model = case_when(
+    grepl("^Tr", measure) ~ "ITM",
+    grepl("^simplemean", measure) ~ "Simple Means"
+  ),
+  measure = sub("^Tr|simplemean", "", measure)) |> 
+  mutate(measure = case_when(
+    measure == "loc" ~ "Location", 
+    measure == "wid" ~ "Width")) |>
+  # Standardize with true variability
+  mutate(mean = if_else(measure == "Location", 
+                        mean / sigma_Tr_loc,
+                        mean / sigma_Tr_wid
+                        ),
+         mcse = if_else(measure == "Location", 
+                        mcse / sigma_Tr_loc,
+                        mcse / sigma_Tr_wid
+                        )) |> 
+  mutate(n_items = paste0(n_items, " Items")) |>
+  # order n_items correctly
+  mutate(n_items = factor(n_items, 
+                          levels = c("5 Items", "10 Items", "20 Items", "40 Items"))) |>
+  ggplot(aes(
+    x = n_respondents,
+    y = mean,
+    color = model,
+    group = model
+  )) +
+  # add vertical line between different sample sizes
+  geom_vline(colour = "#F3F4F5", xintercept = seq(1.5, 4, 1)) +
+  geom_point(position = position_dodge(0.7), size = 2.5) +
+  geom_errorbar(
+    aes(ymin = mean - 1 * mcse, ymax = mean + 1 * mcse),
+    width = .8,
+    position = position_dodge(0.7),
+    show.legend = FALSE
+  ) +
+  ggh4x::facet_grid2(measure ~ n_items, 
+                     axes = "all") +
+  scale_y_continuous(limits = c(0, 0.39), expand = c(0, 0)) +
+  ggokabeito::scale_color_okabe_ito(order = c(5, 1)) +
+  labs(x = "Number of Respondents", y = "Standardized Absolute Bias", color = "") +
+  theme_icm() +
+  # theme(legend.position = "top", text = element_text(size = 14))+
+  # For manuscript plot:
+  theme(legend.position = "top",
+        text = element_text(size = 15.5),
+        axis.text.x = element_text(size = 14., margin = margin(b = 10)),
+        axis.text.y = element_text(size = 14.5, margin = margin(l = 10)),
+        legend.text = element_text(size = 17.5))
+
+plot_sim_absbias_widloc_comb
+
+ggsave(here("plots","sim_main", "sim_absbias_widloc_comb.pdf"),
+       plot_sim_absbias_widloc_comb, width = 11, height = 7)
+```
+
+
+
+
+### MSE for Location and Width
+
+
+#### Combined MSE
+Show both ITM and simple means in a comparison: 
+```{r}
+plot_sim_mse <- sim_res_itm_long |>
+  filter(pm == "mse") |>
+  filter(summary == "mean") |> 
+  filter(measure %in% c("Trinterval", "simplemeaninterval")) |> 
+  mutate(measure = case_when(
+    measure == "Trinterval" ~ "ITM",
+    measure == "simplemeaninterval" ~ "Simple Means"
+  )) |>
+  mutate(n_items = paste0(n_items, " Items")) |> 
+  # order n_items correctly
+  mutate(n_items = factor(n_items, levels = c("5 Items", 
+                                              "10 Items", 
+                                              "20 Items",
+                                              "40 Items"))) |>
+  ggplot(aes(x = n_respondents, 
+             y = mean, 
+             color = measure,
+             group = measure)) +
+  # add vertical line between different sample sizes
+  geom_vline(colour = "#F3F4F5", xintercept = seq(1.5, 4, 1))+
+  geom_point(position = position_dodge(0.7), 
+             size = 2.5) +
+  geom_errorbar(aes(ymin = mean - 1*mcse,
+                            ymax = mean + 1*mcse),
+                        width = .8,
+                 position = position_dodge(0.7),
+                 show.legend = FALSE)+
+  ggh4x::facet_wrap2(n_items ~ .,
+                     axes = "all",
+                     nrow = 1) +
+  scale_y_continuous(limits = c(0, .49), expand = c(0,0)) +
+  ggokabeito::scale_color_okabe_ito(order = c(5, 1))+
+  labs(x = "Number of Respondents",
+       y = "MSE",
+       color = "") +
+  theme_icm()+
+  theme(legend.position = "top",
+        text = element_text(size = 28))
+
+# ggsave(here("plots","sim_main", "sim_mse.pdf"),
+#        plot_sim_mse, width = 7, height = 3.75)
+
+plot_sim_mse
+```
+
+
+#### Separate MSE
+Separated by location and width:
+```{r}
+plot_sim_mse_widloc <- sim_res_itm_long |>
+  filter(pm == "mse") |>
+  filter(summary == "mean") |> 
+  filter(measure %in% c("Trloc", "Trwid")) |> 
+  mutate(measure = case_when(
+    measure == "Trloc" ~ "Location",
+    measure == "Trwid" ~ "Width"
+  )) |>
+  mutate(n_items = paste0(n_items, " Items")) |> 
+  # order n_items correctly
+  mutate(n_items = factor(n_items, levels = c("5 Items", 
+                                              "10 Items", 
+                                              "20 Items",
+                                              "40 Items"))) |>
+  ggplot(aes(x = n_respondents, 
+             y = mean, 
+             color = measure,
+             group = measure)) +
+  # add vertical line between different sample sizes
+  geom_vline(colour = "#F3F4F5", xintercept = seq(1.5, 4, 1))+
+  geom_point(position = position_dodge(0.7), 
+             size = 2.5) +
+  geom_errorbar(aes(ymin = mean - 1*mcse,
+                            ymax = mean + 1*mcse),
+                        width = .8,
+                 position = position_dodge(0.7),
+                 show.legend = FALSE)+
+  ggh4x::facet_wrap2(n_items ~ .,
+                     axes = "all",
+                     nrow = 1) +
+  scale_y_continuous(limits = c(0, 0.11), expand = c(0,0)) +
+  ggokabeito::scale_color_okabe_ito(order = c(5, 1))+
+  labs(x = "Number of Respondents",
+       y = "MSE",
+       color = "") +
+  theme_icm()+
+  theme(legend.position = "top",
+        text = element_text(size = 28))
+
+# ggsave(here("plots","sim_main", "sim_mse_widloc.pdf"),
+#        plot_sim_mse_widloc, width = 7, height = 3.75)
+
+plot_sim_mse_widloc
+```
+
+
+Alternatively, combine plots for location and width and standardize values with the true SD:
+```{r}
+plot_sim_mse_widloc_comb <- sim_res_itm_long |>
+  filter(pm == "mse") |>
+  filter(summary == "mean") |>
+  filter(measure %in% c("Trloc", "Trwid", "simplemeanloc", "simplemeanwid")) |>
+  # split based on model
+  mutate(model = case_when(
+    grepl("^Tr", measure) ~ "ITM",
+    grepl("^simplemean", measure) ~ "Simple Means"
+  ),
+  measure = sub("^Tr|simplemean", "", measure)) |> 
+  mutate(measure = case_when(
+    measure == "loc" ~ "Location", 
+    measure == "wid" ~ "Width")) |>
+  mutate(n_items = paste0(n_items, " Items")) |>
+  # order n_items correctly
+  mutate(n_items = factor(n_items, 
+                          levels = c("5 Items", "10 Items", "20 Items", "40 Items"))) |>
+  ggplot(aes(
+    x = n_respondents,
+    y = mean,
+    color = model,
+    group = model
+  )) +
+  # add vertical line between different sample sizes
+  geom_vline(colour = "#F3F4F5", xintercept = seq(1.5, 4, 1)) +
+  geom_point(position = position_dodge(0.7), size = 2.5) +
+  geom_errorbar(
+    aes(ymin = mean - 1 * mcse, ymax = mean + 1 * mcse),
+    width = .8,
+    position = position_dodge(0.7),
+    show.legend = FALSE
+  ) +
+  ggh4x::facet_grid2(measure ~ n_items, 
+                     axes = "all") +
+  scale_y_continuous(limits = c(0, 0.2), expand = c(0, 0)) +
+  ggokabeito::scale_color_okabe_ito(order = c(5, 1)) +
+  labs(x = "Number of Respondents", y = "MSE", color = "") +
+  theme_icm() +
+  # theme(legend.position = "top", text = element_text(size = 14))+
+  # For manuscript plot:
+  theme(legend.position = "top",
+        text = element_text(size = 14),
+        axis.text.x = element_text(size = 13.5, margin = margin(b = 10)),
+        axis.text.y = element_text(size = 13.5, margin = margin(l = 10)),
+        legend.text = element_text(size = 15.5))
+
+plot_sim_mse_widloc_comb
+
+# ggsave(here("plots","sim_main", "sim_mse_widloc_comb.pdf"),
+#        plot_sim_mse_widloc_comb, width = 11, height = 7)
+```
+
+
+
+
+
+
+
+
+### Scatterplot of Location and Width Bias
+
+Apply a function that retrieves location and width estimates to the results: 
+```{r, eval = FALSE}
+locwid_bias <- prep_locwid(
+  here(
+    "sim_results",
+    "sim_results_itm_2024-09-07_07-27-33",
+    "full_sim_results_itm"
+  )
+)
+# save the data
+saveRDS(
+  locwid_bias,
+  here(
+    "sim_results",
+    "sim_results_itm_2024-09-07_07-27-33",
+    "locwid_bias.rds"
+  )
+)
+```
+
+Or just read in the results: 
+```{r}
+locwid_bias <- readRDS(  here(
+    "sim_results",
+    "sim_results_itm_2024-09-07_07-27-33",
+    "locwid_bias.rds"
+  ))
+```
+
+
+
+We standardize these values with the true variances from the simulation. We obtain these true values as shown in the `generate_itm_data_sim_study` function:
+```{r}
+link <- "ilr"
+mean_benchmark <- simplex_to_bvn(c(.4, .2, .4), type = link)
+sd_benchmark_loc <- simplex_to_bvn(c(.98, .01, .01), type = link)
+sd_benchmark_wid <- simplex_to_bvn(c(.495, .01, .495), type = link)
+    
+# mean for Tr_loc
+mu_Tr_loc <- mean_benchmark[1]
+# mean for Tr_wid
+mu_Tr_wid <- mean_benchmark[2]
+# SD forTr_loc
+sigma_Tr_loc <- sd_benchmark_loc[1] / 4
+# SD Tr_wid
+sigma_Tr_wid <- abs(sd_benchmark_wid[2] - mean_benchmark[2]) / 4
+
+# Then standardize the values
+locwid_bias <- locwid_bias |> 
+  dplyr::mutate(loc_bias_std = loc_bias / sigma_Tr_loc,
+                wid_bias_std = wid_bias / sigma_Tr_wid)
+
+
+```
+
+
+
+
+Then create a scatterplot to investigate compensatory behavior, in other words, if the bias of the location is higher when the bias of the width is lower and vice versa. Overall, there does not seem to be strong evidence for compensatory behavior.
+```{r}
+# if fonts aren't working properly with ggExtra
+# extrafont::font_import()
+
+# # add google font
+sysfonts::font_add_google("News Cycle", "news")
+# use showtext
+showtext::showtext_auto()
+# windows()
+# extrafont::font_import(pattern = "NewsCycle-Regular.ttf")
+# extrafont::loadfonts()
+
+scatter_tmp <- locwid_bias |> 
+  ggplot(aes(x = loc_bias_std, y = wid_bias_std)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  labs(x = "Location Bias (standardized)",
+       y = "Width Bias (standardized)") +
+  geom_smooth(method = "loess", se = TRUE) +
+  scale_x_continuous(limits = c(0, .85), expand = c(0,0)) +
+  scale_y_continuous(limits = c(0, .85), expand = c(0,0)) +
+  # manually set theme here due to font conflicts
+  ggplot2::theme_minimal(base_family = "news") +
+  ggplot2::theme(
+      # remove minor grid
+      panel.grid.minor = ggplot2::element_blank(),
+      # Title and Axis Texts
+      plot.title = ggplot2::element_text(face = "plain",
+                                         size = ggplot2::rel(1.2),
+                                         hjust = 0.5),
+      plot.subtitle = ggplot2::element_text(size = ggplot2::rel(1.1),
+                                            hjust = 0.5),
+      axis.text.x = ggplot2::element_text(face = "plain", size = ggplot2::rel(1.05)),
+      axis.text.y = ggplot2::element_text(face = "plain", size = ggplot2::rel(1.05)),
+      axis.title.x = ggplot2::element_text(face = "plain", size = ggplot2::rel(1.3)),
+      axis.title.y = ggplot2::element_text(face = "plain", size = ggplot2::rel(1.3)),
+      axis.line = element_line(colour = "#6d6d6e"),
+      
+      # Faceting
+      strip.text = ggplot2::element_text(face = "plain",
+                                         size = ggplot2::rel(1.1),
+                                         hjust = 0.5),
+      strip.text.x.top = ggplot2::element_text(face = "plain", 
+                                               size = ggplot2::rel(1.2),
+                                               hjust = 0.5),
+      # strip.text.y = element_blank(),
+      strip.background = ggplot2::element_rect(fill = NA, color = NA),
+      # Grid
+      panel.grid = ggplot2::element_line(colour = "#F3F4F5"),
+      # Legend
+      legend.title = ggplot2::element_text(face = "plain"),
+      legend.position = "top",
+      legend.justification = 1,
+      # Panel/Facets
+      panel.spacing.x = ggplot2::unit(1.6, "lines"),
+      panel.spacing.y = ggplot2::unit(1.6, "lines"),
+      # Remove vertical grid lines
+      panel.grid.major.x = ggplot2::element_blank())+
+  theme(text = element_text(size = 28))
+
+# show marginal distributions as histograms
+# doesn't work with custom font
+# scatter_locwid <- ggExtra::ggMarginal(scatter_tmp, type = "histogram", bins = 50)+
+#   theme_minimal(base_family = "news")
+
+# ggsave(here("plots","sim_main", "scatter_locwid.pdf"),
+#        scatter_tmp, width = 7, height = 5)
+
+scatter_tmp
+```
+
+
+### Visualization of raw results
+
+Instead of only showing aggregate performance measures, we can also visualize the raw repetition-wise performance measures to investigate the variability and potential skewness of the performance. 
+
+```{r eval = FALSE}
+raw_absbias <-
+  prep_locwid(
+    here(
+      "sim_results",
+      "sim_results_itm_2024-09-07_07-27-33",
+      "full_sim_results_itm"
+    ),
+    simplemeans = TRUE
+  )
+saveRDS(
+  raw_absbias,
+  here(
+    "sim_results",
+    "sim_results_itm_2024-09-07_07-27-33",
+    "raw_absbias.rds"
+  )
+)
+```
+
+```{r}
+raw_absbias <- readRDS(
+  here(
+    "sim_results",
+    "sim_results_itm_2024-09-07_07-27-33",
+    "raw_absbias.rds"
+  )
+)
+```
+
+```{r}
+# attach them to the condition-wise results
+raw_ests_boxplot <- sim_res_itm |> 
+  mutate(iteration = row_number()) |> 
+  dplyr::select(n_respondents, n_items, iteration) |> 
+  right_join(raw_absbias, by = "iteration") |> 
+  pivot_longer(cols = c(loc_bias, wid_bias, smloc_bias, smwid_bias)) |> 
+  mutate(n_respondents = factor(n_respondents)) |> 
+  mutate(name = gsub("_bias", "", name)) |> 
+  mutate(name = case_match(name,
+                           "loc" ~ "ITM Location",
+                           "wid" ~ "ITM Width",
+                           "smloc" ~ "Simplemeans Location",
+                           "smwid" ~ "Simplemeans Width",
+                           .default = name)) |> 
+  separate_wider_delim(name, delim = " ", names = c("model", "measure")) |> 
+  mutate(model = gsub("Simplemeans", "Simple Means", model)) |> 
+  mutate(n_items = paste0(n_items, " Items")) |>
+  # order n_items correctly
+  mutate(n_items = factor(n_items, 
+                          levels = c("5 Items", "10 Items", "20 Items", "40 Items"))) |>
+  mutate(n_respondents = as_factor(n_respondents)) |> 
+    ggplot(aes(
+    x = n_respondents,
+    y = value,
+    color = model,
+    group = model,
+    fill = model
+  )) +
+  # add vertical line between different sample sizes
+  geom_vline(colour = "#F3F4F5", xintercept = seq(1.5, 4, 1)) +
+  # ggdist::stat_halfeye(
+  #   position = "dodge",
+  #   scale = 5
+  # ) +
+  geom_boxplot(alpha = .2, lwd = 0.6, fatten = 0.9,
+               inherit.aes = FALSE,
+               aes(x = n_respondents,
+                   y = value,
+                   fill = model,
+                   color = model))+
+  # geom_point(
+  #   size = 1,
+  #   alpha = 0.15,
+  #   position = ggplot2::position_dodge(width = .6)
+  # )+ 
+  # geom_jitter(size=0.4, alpha=0.2) +
+  ggh4x::facet_grid2(measure ~ n_items, 
+                     axes = "all",
+                     scales = "free_y") +
+  # scale_y_continuous(limits = c(0, 1), expand = c(0, 0)) +
+  ggokabeito::scale_color_okabe_ito(order = c(5, 1)) +
+  ggokabeito::scale_fill_okabe_ito(order = c(5, 1)) +
+  labs(x = "Number of Respondents", 
+       y = "Absolute Bias", 
+       color = "",
+       fill = "") +
+  theme_icm() +
+  # theme(legend.position = "top", text = element_text(size = 18))+
+  # For manuscript plot:
+  theme(legend.position = "top",
+        text = element_text(size = 14),
+        axis.text.x = element_text(size = 13.5, margin = margin(b = 10)),
+        axis.text.y = element_text(size = 13.5, margin = margin(l = 10)),
+        legend.text = element_text(size = 15.5))
+  
+raw_ests_boxplot
+# ggsave(here("plots","sim_main", "raw_ests_boxplot.pdf"),
+#        raw_ests_boxplot, width = 15, height = 7)
+
+```
+
+
+
+### Summary Table
+To show the numerical results of the main outcome measures, we create a summary table below.
+```{r}
+sim_res_itm |> 
+  dplyr::select(n_items, n_respondents, 
+         Tr_interval_mean_fn_abs_bias_mean, Tr_interval_mean_fn_abs_bias_mcse,
+         Tr_interval_mean_fn_mse_mean, Tr_interval_mean_fn_mse_mcse, 
+         simplemean_interval_mean_fn_abs_bias_mcse, simplemean_interval_mean_fn_abs_bias_mean,
+         simplemean_interval_mean_fn_mse_mean, simplemean_interval_mean_fn_mse_mcse) |> 
+  pivot_longer(cols = !c(n_items, n_respondents)) |> 
+  # split based on last underscore 
+  separate(name, into = c("name", "suffix"), sep = "_(?=[^_]+$)", remove = FALSE) |> 
+  pivot_wider(names_from = suffix, values_from = value) |> 
+  # again split based on last underscore
+  separate(name, into = c("name", "pm"), sep = "_(?=[^_]+$)", remove = FALSE) |> 
+  # remove "mean_fn" from name
+  mutate(name = str_remove(name, "_mean_fn_abs")) |> 
+  mutate(name = str_remove(name, "_mean_fn")) |> 
+  dplyr::rename(
+    "Items" = "n_items",
+    "Respondents" = "n_respondents",
+    "Model" = "name",
+    "Measure" = "pm",
+    "Mean" = "mean",
+    "MCSE" = "mcse"
+  ) |> 
+  mutate(Model = case_when(
+    Model == "Tr_interval" ~ "ITM",
+    Model == "simplemean_interval" ~ "Simple Means"
+  )) |> 
+  mutate(Measure = case_when(
+    Measure == "bias" ~ "Bias",
+    Measure == "mse" ~ "MSE"
+  )) |> 
+  arrange(Items, Respondents) |> 
+  mutate(across(c(Mean, MCSE), ~round(., 4))) |> 
+  knitr::kable()
+  
+```
+
+
+
+# Session info
+
+```{r}
+pander::pander(sessionInfo())
+```
+
+

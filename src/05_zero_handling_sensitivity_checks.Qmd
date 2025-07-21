@@ -1,0 +1,1059 @@
+---
+title: "Interval Consensus Model"
+subtitle: "Sensitivity Analyses for Zero Handling Methods"
+author: 
+ - name: Matthias Kloft
+   orcid: 0000-0003-1845-6957
+   affiliations: University of Marburg  
+ - name: Björn S. Siepe
+   orcid: 0000-0002-9558-4648
+   affiliations: University of Marburg
+ - name: Daniel W. Heck
+   orcid: 0000-0002-6302-9252
+   affiliations: University of Marburg
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-tools: true
+    code-summary: "Show the code"
+    fig-format: "png"
+    fig-width: 7
+    fig-height: 7
+    fig-responsive: true
+    embed-resources: true
+execute:
+  message: false
+  warning: false
+params: 
+  refit: false
+---
+
+```{r setup}
+# Libraries
+packages <- c(
+  "tidyverse",
+  "rmarkdown",
+  "svglite",
+  "psych",
+  "here",
+  "ggpubr",
+  "gridExtra",
+  "extraDistr"
+)
+# in case cmdstanr is not installed
+# install.packages("cmdstanr",
+#                  repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+
+if (!require("pacman"))
+  install.packages("pacman")
+pacman::p_load(packages, update = F, character.only = T)
+
+# default chunk options
+knitr::opts_chunk$set(
+  # fig.height = 7,
+  # fig.width = 10,
+  include = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+source(here("src", "00_functions.R"))
+set.seed(35032)
+```
+
+# Illustration of Zero-Handling Methods
+
+## Uniform Reference Distribution for Comparison
+
+```{r}
+distribution <- extraDistr::rdirichlet(1e4, c(1,1,1)) |> 
+  simplex_to_bvn()
+
+mean_1 <- mean(distribution$x_bvn_1)
+sd_1 <- sd(distribution$x_bvn_1)
+
+mean_2 <- mean(distribution$x_bvn_2)
+sd_2 <- sd(distribution$x_bvn_2)
+```
+
+Mean of the unbounded location:
+```{r}
+mean_1
+```
+
+Standard deviation of the unbounded location:
+```{r}
+sd_1
+```
+
+Mean of the unbounded width:
+```{r}
+mean_2
+```
+
+Standard deviation of the unbounded width:
+```{r}
+sd_2
+```
+
+
+## Define Edge Cases with Zeros and Padding Constants
+```{r}
+# edge_cases_raw <- rbind(
+#   "[0,1]" = c(0,1,0),
+#   "[0,.5]" = c(0,.5,.5),
+#   "[0,0]" = c(0,0,1),
+#   "[.5,.5]" = c(.5,0,.5)
+# )
+
+edge_cases_raw <- rbind(
+  "A" = c(0,1,0),
+  "B" = c(0,.5,.5),
+  "C" = c(0,0,1),
+  "D" = c(.5,0,.5)
+)
+
+rownames(edge_cases_raw)
+
+padding <- list(.02, .01, .005, .001)
+levels <- c(.001, .005, .01, .02)
+labels <- c("0.1%", "0.5%", "1%", "2%")
+```
+
+Also load empirical data for reference and later model sensitivity ckecks
+```{r}
+# Load empirical data for edge cases analysis
+if (!file.exists(here("data", "df_master_long.rds"))) {
+  osf_retrieve_file("https://osf.io/7azbr") |>
+    osf_download(path = here("data"))
+}
+
+# Load and process empirical data
+df_long <- read_rds(here("data", "df_master_long.rds")) |>
+  dplyr::filter(domain == "prob_phrase") |> 
+  # recompute indices
+  mutate(jj = as.integer(factor(jj)),
+         ii = as.integer(factor(ii)))
+
+df_long$name_en[df_long$name_en == "Fifty-fifty chance"] <- "fifty-fifty chance"
+
+empirical_raw <- df_long |> 
+  mutate(
+    x_1 = x_L / 100,
+    x_2 = (x_U - x_L) / 100,
+    x_3 = 1 - x_U / 100
+    ) |> 
+  select(x_1, x_2, x_3) |>
+  remove_missing()
+```
+
+
+## Define Replacement Methods
+
+### Additive Replacement
+```{r}
+additive_replacement <- function(simplex, padding = .01) {
+  if (is.vector(simplex)) {
+    simplex <- t(as.matrix(simplex))
+  }
+  
+  if (is.data.frame(simplex)) {
+    simplex <- as.matrix(simplex)
+  }
+  
+  replace <- function(x, padding) {
+    n_zeros <- sum(x == 0)
+    
+    x_new <- x
+    
+    x_new[x == 0] <- (padding * (n_zeros + 1) * (3 - n_zeros)) / 9
+    x_new[x != 0] <- x[x != 0] - (padding * (n_zeros + 1) * n_zeros) / 9
+    
+    return(x_new)
+  }
+  
+  simplex <- apply(X = simplex, MARGIN = 1, FUN = replace, padding) |> t()
+
+  
+  return(simplex)
+}
+
+additive_replacement(edge_cases_raw, padding = .01) |>
+        as.data.frame() |> simplex_to_bvn()
+```
+
+### Simple Replacement
+```{r}
+simple_replacement <- function(simplex, padding = .01) {
+  if (is.vector(simplex)) {
+    simplex <- t(as.matrix(simplex))
+  }
+  
+  if (is.data.frame(simplex)) {
+    simplex <- as.matrix(simplex)
+  }
+  
+  replace <- function(x, padding) {
+    n_zeros <- sum(x == 0)
+    x_new <- x
+    x_new[x == 0] <- padding / (1 + n_zeros * padding)
+    x_new[x != 0] <- x[x != 0] / (1 + n_zeros * padding)
+    
+    return(x_new)
+  }
+  
+  simplex <- apply(X = simplex,
+                   MARGIN = 1,
+                   FUN = replace,
+                   padding) |> t()
+  
+  return(simplex)
+}
+
+simple_replacement(edge_cases_raw, padding = .01)
+
+simple_replacement(edge_cases_raw, padding = .01) |>
+  as.data.frame() |> simplex_to_bvn()
+```
+
+
+### Multiplicative Replacement
+```{r}
+multiplicative_replacement <- function(simplex, padding = .01) {
+  if (is.vector(simplex)) {
+    simplex <- t(as.matrix(simplex))
+  }
+  
+  if (is.data.frame(simplex)) {
+    simplex <- as.matrix(simplex)
+  }
+  
+  replace <- function(x, padding) {
+    n_zeros <- sum(x == 0)
+    
+    x_new <- x
+    
+    x_new[x == 0] <- padding
+    x_new[x != 0] <- x[x != 0] * (1 - padding * n_zeros)
+    
+    return(x_new)
+  }
+  
+  simplex <- apply(X = simplex, MARGIN = 1, FUN = replace, padding) |> t()
+  
+  return(simplex)
+}
+
+multiplicative_replacement(edge_cases_raw, padding = .01)
+multiplicative_replacement(edge_cases_raw, padding = .01) |>
+        as.data.frame() |> simplex_to_bvn()
+```
+
+### Rescaling Replacement
+```{r}
+rescaling_replacement <- function(simplex, padding = .01) {
+  if (is.vector(simplex)) {
+    simplex <- t(as.matrix(simplex))
+  }
+  
+  if (is.data.frame(simplex)) {
+    simplex <- as.matrix(simplex)
+  }
+  
+  # simple replacement
+  simplex <- (simplex + padding)
+  simplex <- simplex / (1 + padding * 3)
+  
+  return(simplex)
+}
+
+rescaling_replacement(edge_cases_raw, padding = .01)
+rescaling_replacement(edge_cases_raw, padding = .01) |>
+        as.data.frame() |> simplex_to_bvn()
+```
+
+## Plots
+
+### Additive
+```{r}
+# Edge Cases
+edge_cases_bvn_additive <-
+  lapply(padding, FUN = function(X) {
+    edge_cases_padded <- additive_replacement(edge_cases_raw, padding = X) |>
+      as.data.frame()
+    
+    edge_cases_padded_bvn <- simplex_to_bvn(edge_cases_padded)
+    edge_cases_padded_bvn$p_1 <- pnorm(edge_cases_padded_bvn$x_bvn_1, mean_1, sd_1) |> round(5)
+    edge_cases_padded_bvn$p_2 <- pnorm(edge_cases_padded_bvn$x_bvn_2, mean_2, sd_2) |> round(5)
+    edge_cases_padded_bvn$padding <- X
+    edge_cases_padded_bvn$item <- rownames(edge_cases_raw)
+    edge_cases_padded_bvn$method <- "additive"
+    
+    return(edge_cases_padded_bvn)
+  })
+
+edge_cases_bvn_additive <- do.call(what = "rbind", edge_cases_bvn_additive) |>
+  mutate(item = factor(item),
+         padding = factor(
+           padding,
+           levels = levels,
+           labels = labels
+         ))
+
+# Empirical Data
+empirical_bvn_additive <-
+  lapply(padding, FUN = function(X) {
+    empirical_padded <- additive_replacement(empirical_raw |> select(x_1, x_2, x_3), padding = X) |>
+      as.data.frame()
+
+    empirical_padded_bvn <- simplex_to_bvn(empirical_padded)
+    empirical_padded_bvn$p_1 <- pnorm(empirical_padded_bvn$x_bvn_1, mean_1, sd_1) |> round(5)
+    empirical_padded_bvn$p_2 <- pnorm(empirical_padded_bvn$x_bvn_2, mean_2, sd_2) |> round(5)
+    empirical_padded_bvn$padding <- X
+    empirical_padded_bvn$method <- "additive"
+
+    return(empirical_padded_bvn)
+  })
+
+empirical_bvn_additive <- do.call(what = "rbind", empirical_bvn_additive) |>
+  mutate(
+         padding = factor(
+           padding,
+           levels = levels,
+           labels = labels
+         ))
+```
+
+```{r}
+# plotting function
+plot_edge_cases <- function(distribution, edge_cases_bvn, title) {
+  plot <-
+    ggplot() +
+    geom_vline(xintercept = 0,
+               linetype = 2,
+               alpha = .2) +
+    geom_hline(yintercept = 0,
+               linetype = 2,
+               alpha = .2) +
+    geom_point(
+      data = distribution,
+      aes(x_bvn_1, x_bvn_2),
+      alpha = .1,
+      size = .1
+    ) +
+    # geom_point(
+    #   data = edge_cases_bvn,
+    #   aes(x = x_bvn_1, y = x_bvn_2),
+    #   
+    #   size = 3,
+    #   color = "#d95f02"
+    # ) +
+    geom_label(
+      data = edge_cases_bvn,
+      aes(
+        x = x_bvn_1,
+        y = x_bvn_2,
+        label = factor(item)
+      ),
+      family = "sans",
+      face = "bold",
+      size.unit = "pt",
+      size = 12,
+      #nudge_y = .95,
+      label.size = 0,
+      alpha = .7,
+      label.padding = unit(0.2, "lines"),
+      color = "#d95f02"
+    ) +
+    scale_x_continuous(
+      limits = c(-6.7, 5),
+      breaks = seq(-4, 4, 2),
+      expand = expansion(0, 0)
+    ) +
+    scale_y_continuous(
+      limits = c(-6.2, 7),
+      breaks = seq(-4, 4, 2),
+      expand = expansion(0, 0)
+    ) +
+    coord_equal() +
+    labs(
+      x = "Unbounded Location",
+      y = "Unbounded Width",
+      title = title,
+      subtitle = "A: [0,1], B: [0,.5], C: [0,0], D: [.5,.5]"
+    ) +
+    facet_wrap(vars(padding)) +
+    theme_icm() +
+    theme(
+      strip.text = element_text(
+        face = "plain",
+        size = ggplot2::rel(1),
+        hjust = 0.5
+      ),
+      panel.grid = element_blank(),
+      axis.line = element_line(colour = "#6d6d6e", size = .3),
+      axis.ticks = element_line(colour = "#6d6d6e", size = .3),
+      axis.title.y = element_text(margin = margin(0, -5, 0, 0, "pt"))
+    )
+  return(plot)
+}
+```
+
+### Edge Cases With Reference Distribution
+```{r}
+plot_additive_replacement <- plot_edge_cases(
+  distribution,
+  edge_cases_bvn_additive,
+  title = "Additive Replacement"
+)
+
+plot_additive_replacement
+```
+
+#### Edge Cases With Empirical Data
+```{r}
+plot_additive_replacement <- plot_edge_cases(
+  distribution = empirical_bvn_additive,
+  edge_cases_bvn = edge_cases_bvn_additive,
+  title = "Additive Replacement"
+)
+
+plot_additive_replacement
+```
+
+
+#### Simple
+```{r}
+# Edge Cases
+edge_cases_bvn_simple <-
+  lapply(padding, FUN = function(X) {
+    edge_cases_padded <- simple_replacement(edge_cases_raw, padding = X) |>
+      as.data.frame()
+    
+    edge_cases_padded_bvn <- simplex_to_bvn(edge_cases_padded)
+    edge_cases_padded_bvn$p_1 <- pnorm(edge_cases_padded_bvn$x_bvn_1, mean_1, sd_1) |> round(5)
+    edge_cases_padded_bvn$p_2 <- pnorm(edge_cases_padded_bvn$x_bvn_2, mean_2, sd_2) |> round(5)
+    edge_cases_padded_bvn$padding <- X
+    edge_cases_padded_bvn$item <- rownames(edge_cases_raw) 
+    edge_cases_padded_bvn$method <- "simple"
+    
+    return(edge_cases_padded_bvn)
+  })
+
+edge_cases_bvn_simple <- do.call(what = "rbind", edge_cases_bvn_simple) |>
+  mutate(item = factor(item),
+         padding = factor(
+           padding,
+           levels = levels,
+           labels = labels
+         ))
+
+# Empirical Data
+empirical_bvn_simple <-
+  lapply(padding, FUN = function(X) {
+    empirical_padded <- simple_replacement(empirical_raw, padding = X) |>
+      as.data.frame()
+    
+    empirical_padded_bvn <- simplex_to_bvn(empirical_padded)
+    empirical_padded_bvn$p_1 <- pnorm(empirical_padded_bvn$x_bvn_1, mean_1, sd_1) |> round(5)
+    empirical_padded_bvn$p_2 <- pnorm(empirical_padded_bvn$x_bvn_2, mean_2, sd_2) |> round(5)
+    empirical_padded_bvn$padding <- X
+    empirical_padded_bvn$method <- "simple"
+    
+    return(empirical_padded_bvn)
+  })
+
+empirical_bvn_simple <- do.call(what = "rbind", empirical_bvn_simple) |>
+  mutate(padding = factor(padding, levels = levels, labels = labels))
+```
+
+#### Edge Cases With Reference Distribution
+```{r}
+plot_simple_replacement <- plot_edge_cases(
+  distribution,
+  edge_cases_bvn_simple,
+  title = "Simple Replacement"
+)
+plot_simple_replacement
+```
+
+#### Edge Cases With Empirical Data
+```{r}
+plot_simple_replacement <- plot_edge_cases(
+  distribution = empirical_bvn_simple,
+  edge_cases_bvn = edge_cases_bvn_simple,
+  title = "Simple Replacement"
+)
+plot_simple_replacement
+```
+
+
+### Multiplicative Replacement
+```{r}
+# Edge Cases
+edge_cases_bvn_multiplicative <-
+  lapply(
+    padding,
+    FUN = function(X) {
+      
+      edge_cases_padded <- 
+        multiplicative_replacement(edge_cases_raw, padding = X) |>
+        as.data.frame()
+      
+      edge_cases_padded_bvn <- simplex_to_bvn(edge_cases_padded)
+      edge_cases_padded_bvn$p_1 <- pnorm(edge_cases_padded_bvn$x_bvn_1, mean_1, sd_1) |>
+        round(5)
+      edge_cases_padded_bvn$p_2 <- pnorm(edge_cases_padded_bvn$x_bvn_2, mean_2, sd_2)|>
+        round(5)
+      edge_cases_padded_bvn$padding <- X
+      edge_cases_padded_bvn$item <- rownames(edge_cases_raw) 
+      edge_cases_padded_bvn$method <- "multiplicative"
+      
+      return(edge_cases_padded_bvn)
+    }
+  )
+
+edge_cases_bvn_multiplicative <- do.call(what = "rbind", edge_cases_bvn_multiplicative) |>
+  mutate(item = factor(item),
+         padding = factor(
+           padding,
+           levels = levels,
+           labels = labels
+         ))
+
+# Empirical Data
+empirical_bvn_multiplicative <-
+  lapply(
+    padding,
+    FUN = function(X) {
+      empirical_padded <-
+        multiplicative_replacement(empirical_raw, padding = X) |>
+        as.data.frame()
+      
+      empirical_padded_bvn <- simplex_to_bvn(empirical_padded)
+      empirical_padded_bvn$p_1 <- pnorm(empirical_padded_bvn$x_bvn_1, mean_1, sd_1) |>
+        round(5)
+      empirical_padded_bvn$p_2 <- pnorm(empirical_padded_bvn$x_bvn_2, mean_2, sd_2) |>
+        round(5)
+      empirical_padded_bvn$padding <- X
+      empirical_padded_bvn$method <- "multiplicative"
+      
+      return(empirical_padded_bvn)
+    }
+  )
+
+empirical_bvn_multiplicative <- do.call(what = "rbind", empirical_bvn_multiplicative) |>
+  mutate(padding = factor(padding, levels = levels, labels = labels))
+```
+
+
+#### Edge Cases With Reference Distribution
+```{r}
+plot_multiplicative_replacement <- plot_edge_cases(
+  distribution,
+  edge_cases_bvn_multiplicative,
+  title = "Multiplicative Replacement"
+)
+plot_multiplicative_replacement
+```
+
+#### Edge Cases With Empirical Data
+```{r}
+plot_multiplicative_replacement <- plot_edge_cases(
+  distribution = empirical_bvn_multiplicative,
+  edge_cases_bvn = edge_cases_bvn_multiplicative,
+  title = "Multiplicative Replacement"
+)
+plot_multiplicative_replacement
+```
+
+  
+### Rescaling
+```{r}
+# Edge Cases
+edge_cases_bvn_rescaling <-
+  lapply(
+    padding,
+    FUN = function(X) {
+      edge_cases_padded <- 
+        rescaling_replacement(edge_cases_raw, padding = X) |>
+        as.data.frame()
+      
+      edge_cases_padded_bvn <- simplex_to_bvn(edge_cases_padded)
+      edge_cases_padded_bvn$p_1 <- pnorm(edge_cases_padded_bvn$x_bvn_1, mean_1, sd_1) |>
+        round(5)
+      edge_cases_padded_bvn$p_2 <- pnorm(edge_cases_padded_bvn$x_bvn_2, mean_2, sd_2) |>
+        round(5)
+      edge_cases_padded_bvn$padding <- X
+      edge_cases_padded_bvn$item <- rownames(edge_cases_raw) 
+      edge_cases_padded_bvn$method <- "rescaling"
+      
+      return(edge_cases_padded_bvn)
+    }
+  )
+
+edge_cases_bvn_rescaling <- do.call(what = "rbind", edge_cases_bvn_rescaling) |>
+  mutate(item = factor(item),
+         padding = factor(
+           padding,
+           levels = levels,
+           labels = labels
+         ))
+
+# Empirical Data
+empirical_bvn_rescaling <-
+  lapply(
+    padding,
+    FUN = function(X) {
+      empirical_padded <-
+        rescaling_replacement(empirical_raw, padding = X) |>
+        as.data.frame()
+      
+      empirical_padded_bvn <- simplex_to_bvn(empirical_padded)
+      empirical_padded_bvn$p_1 <- pnorm(empirical_padded_bvn$x_bvn_1, mean_1, sd_1) |>
+        round(5)
+      empirical_padded_bvn$p_2 <- pnorm(empirical_padded_bvn$x_bvn_2, mean_2, sd_2) |>
+        round(5)
+      empirical_padded_bvn$padding <- X
+      empirical_padded_bvn$method <- "rescaling"
+      
+      return(empirical_padded_bvn)
+    }
+  )
+empirical_bvn_rescaling <- do.call(what = "rbind", empirical_bvn_rescaling) |>
+  mutate(padding = factor(padding, levels = levels, labels = labels))
+```
+
+#### Edge Cases With Reference Distribution
+```{r}
+plot_rescaling_replacement <- plot_edge_cases(
+  distribution,
+  edge_cases_bvn_rescaling,
+  title = "Rescaling Replacement"
+)
+
+plot_rescaling_replacement
+```
+
+#### Edge Cases With Empirical Data
+```{r}
+plot_rescaling_replacement <-
+  plot_edge_cases(distribution = empirical_bvn_rescaling,
+                  edge_cases_bvn = edge_cases_bvn_rescaling,
+                  title = "Rescaling Replacement")
+plot_rescaling_replacement
+```
+
+
+## Comparison of Methods
+
+```{r}
+edge_cases_bvn <- rbind(
+  edge_cases_bvn_additive,
+  edge_cases_bvn_simple,
+  edge_cases_bvn_multiplicative,
+  edge_cases_bvn_rescaling
+) |> 
+  mutate(method = factor(method)) 
+
+
+empirical_bvn <- rbind(
+  empirical_bvn_additive,
+  empirical_bvn_simple,
+  empirical_bvn_multiplicative,
+  empirical_bvn_rescaling
+) |> 
+  mutate(method = factor(method))
+```
+
+#### Edge Cases With Reference Distribution
+```{r}
+plot_comparison_reference <- plot_edge_cases(
+  distribution,
+  edge_cases_bvn,
+  title = "Comparison of Zero-Handling Methods"
+) +
+  facet_grid(padding ~ method) +
+  theme_icm() +
+  theme(
+    panel.grid = element_blank(),
+    axis.line = element_line(colour = "#6d6d6e", size = .3),
+    axis.ticks = element_line(colour = "#6d6d6e", size = .3),
+    axis.title.y = element_text(margin = margin(0, -5, 0, 0, "pt"))
+  )
+plot_comparison_reference
+
+ggsave(
+  here("plots", "comparison_zero_handling_reference.pdf"),
+  plot_comparison_reference,
+  width = 15,
+  height = 15,
+  units = "cm",
+  scale = 1.8
+)
+```
+
+#### Edge Cases With Empirical Data
+```{r}
+plot_comparison_empirical <- plot_edge_cases(
+  distribution = empirical_bvn,
+  edge_cases_bvn,
+  title = "Comparison of Zero-Handling Methods"
+) +
+  facet_grid(padding ~ method) +
+  theme_icm() +
+  theme(
+    panel.grid = element_blank(),
+    axis.line = element_line(colour = "#6d6d6e", size = .3),
+    axis.ticks = element_line(colour = "#6d6d6e", size = .3),
+    axis.title.y = element_text(margin = margin(0, -5, 0, 0, "pt"))
+  )
+plot_comparison_empirical
+
+ggsave(
+  here("plots", "comparison_zero_handling_empirical.pdf"),
+  plot_comparison_empirical,
+  width = 15,
+  height = 15,
+  units = "cm",
+  scale = 1.8
+)
+```
+
+
+## Quantiles
+
+```{r}
+
+edge_cases_bvn |> dplyr::filter(p_1 < .01 & p_1 > .001) |> arrange(desc(p_1))
+```
+
+```{r}
+
+edge_cases_bvn |> dplyr::filter(p_2 < .01 & p_2 > .001) |> arrange(desc(p_1))
+```
+
+
+```{r}
+
+edge_cases_bvn |> dplyr::filter(p_2 > .99 & p_2 < .999) |> arrange(desc(p_1))
+```
+
+### Combinations of methods and padding that result in .01 > p > .001 for both dimensions
+```{r}
+edge_cases_bvn |> dplyr::filter((p_1 < .01 &
+                      p_1 > .001 )|
+                      (p_2 < .01 &
+                      p_2 > .001) | (p_2 > .99 & p_2 < .999)) |> arrange(desc(p_1)) |> group_by(method, padding) |> 
+  summarise(n = n()) |> dplyr::filter(n == 3)
+```
+
+# Ratios of components
+
+```{r}
+vec <- rbind(edge_cases_raw, E = c(.1,.8,.1), F = c(.1,.9,0))
+
+vec
+rescaling_replacement(vec, padding = .01)
+simple_replacement(vec, padding = .01)
+additive_replacement(vec, padding = .01)
+multiplicative_replacement(vec, padding = .01)
+```
+
+```{r}
+# function to compute ratios of components
+compute_ratios <- function(simplex) {
+  r1 <- simplex[, 1] / simplex[, 2]
+  r2 <- simplex[, 2] / simplex[, 3]
+  r3 <- simplex[, 1] / simplex[, 3]
+  ratios <- cbind(r1, r2, r3)
+  return(ratios)
+}
+
+vec2 <- vec[c("E", "F"), ]
+
+cat("Ratios for original simplex:\n")
+compute_ratios(vec2)
+
+cat("\nRatios for rescaled simplex:\n")
+compute_ratios(rescaling_replacement(vec2, padding = .01))
+
+cat("\nRatios for simple replacement:\n")
+compute_ratios(simple_replacement(vec2, padding = .01))
+
+cat("\nRatios for additive replacement:\n")
+compute_ratios(additive_replacement(vec2, padding = .01))
+
+cat("\nRatios for multiplicative replacement:\n")
+compute_ratios(multiplicative_replacement(vec2, padding = .01))
+```
+
+
+***
+
+# Verbal Quantifiers: Sensitivity Analysis
+
+## Process Item Names
+```{r}
+# item names
+item_names_quantifier <- df_long %>%
+  dplyr::select(jj, name_en) %>%
+  distinct() %>%
+  arrange(jj) %>%
+  pull(name_en)
+```
+
+## Rescaling of Data
+```{r}
+#| code-fold: show
+
+df_long <- df_long %>%
+  dplyr::mutate(
+    x_L_01 = (x_L / 100 + .01) / 1.03,
+    x_U_01 = (x_U / 100 + .02) / 1.03,
+    x_L_005 = (x_L / 100 + .005) / 1.015,
+    x_U_005 = (x_U / 100 + .01) / 1.015,
+    x_L_001 = (x_L / 100 + .001) / 1.003,
+    x_U_001 = (x_U / 100 + .002) / 1.003
+  )
+```
+
+## Stan Data
+```{r}
+### Stan data declaration
+df_long <- df_long %>% dplyr::filter(!is.na(x_splx_1))
+
+I = length(unique(df_long$ii))
+J = length(unique(df_long$jj))
+N  = nrow(df_long)
+ii = df_long$ii
+jj = df_long$jj
+nn = c(1:N)
+
+Y_splx_01 = cbind(
+  df_long$x_L_01,
+  df_long$x_U_01 - df_long$x_L_01,
+  1 - df_long$x_U_01) |> 
+  as.matrix()
+
+Y_splx_005 = cbind(
+  df_long$x_L_005,
+  df_long$x_U_005 - df_long$x_L_005,
+  1 - df_long$x_U_005) |> 
+  as.matrix()
+
+Y_splx_001 = cbind(
+  df_long$x_L_001,
+  df_long$x_U_001 - df_long$x_L_001,
+  1 - df_long$x_U_001) |> 
+  as.matrix()
+
+#Y_splx[is.na(Y_splx)]
+
+# # sanity check: all rows sum to 1
+# check <- apply(Y_splx, 1, sum) %>% as.data.frame()
+# table(check)
+
+## stan data list
+stan_data_01 <- list(
+  I = I,
+  J = J,
+  N = N,
+  ii = ii,
+  jj = jj,
+  nn = nn,
+  Y_splx = Y_splx_01,
+  padding = .01
+)
+
+stan_data_005 <- list(
+  I = I,
+  J = J,
+  N = N,
+  ii = ii,
+  jj = jj,
+  nn = nn,
+  Y_splx = Y_splx_005,
+  padding = .005
+)
+
+stan_data_001 <- list(
+  I = I,
+  J = J,
+  N = N,
+  ii = ii,
+  jj = jj,
+  nn = nn,
+  Y_splx = Y_splx_001,
+  padding = .001
+)
+
+# Choose model to fit
+model_name <- "itm_quantifier_beta"
+```
+
+## Compile Model
+```{r compile}
+#| eval: !expr params$refit
+
+# Compile model
+model <-
+  cmdstanr::cmdstan_model(
+    stan_file = here("src", "models", paste0(model_name, ".stan")),
+    pedantic = TRUE,
+    quiet = FALSE
+  )
+```
+
+## Fit Models
+```{r fit generic, eval=FALSE}
+#| eval: !expr params$refit
+
+# number of MCMC chains
+n_chains <- 4
+
+# Run sampler
+fit_01 <- model$sample(
+  data = stan_data_01,
+  seed = 2023,
+  chains = n_chains,
+  parallel_chains = n_chains,
+  iter_warmup = 500,
+  iter_sampling = 1000,
+  refresh = 0,
+  thin = 1,
+  adapt_delta = .8,
+  init = .1
+)
+# save fit
+fit_01$save_object(file =  here("fits", paste0(model_name, "quantifier_sensitivity_01.RDS")))
+
+# Run sampler
+fit_005 <- model$sample(
+  data = stan_data_005,
+  seed = 2023,
+  chains = n_chains,
+  parallel_chains = n_chains,
+  iter_warmup = 500,
+  iter_sampling = 1000,
+  refresh = 500,
+  thin = 1,
+  adapt_delta = .8,
+  init = .1
+)
+# save fit
+fit_005$save_object(file =  here("fits", paste0(model_name, "quantifier_sensitivity_005.RDS")))
+
+# Run sampler
+fit_001 <- model$sample(
+  data = stan_data_001,
+  seed = 2023,
+  chains = n_chains,
+  parallel_chains = n_chains,
+  iter_warmup = 500,
+  iter_sampling = 1000,
+  refresh = 0,
+  thin = 1,
+  adapt_delta = .8,
+  init = .1
+)
+# save fit
+fit_001$save_object(file =  here("fits", paste0(model_name, "quantifier_sensitivity_001.RDS")))
+```
+
+```{r}
+# load  fits
+fit_01 <- readRDS(file =  here("fits", paste0(model_name, "quantifier_sensitivity_01.RDS")))
+fit_005 <- readRDS(file =  here("fits", paste0(model_name, "quantifier_sensitivity_005.RDS")))
+fit_001 <- readRDS(file =  here("fits", paste0(model_name, "quantifier_sensitivity_001.RDS")))
+```
+
+## Latent Consensus Intervals
+```{r}
+# Get posterior consensus intervals
+consensus_01 <- data.frame(
+  idx = 1:J,
+  name = item_names_quantifier,
+  Constant = ".01",
+  lower_01 = fit_01$summary("Tr_splx") %>% as.data.frame() %>% pull(median) %>% .[1:J],
+  wid_01 = fit_01$summary("Tr_splx") %>% as.data.frame() %>% pull(median) %>% .[(J +
+                                                                             1):(J * 2)]
+) %>%
+  mutate(loc_01 = lower_01 + wid_01 / 2, upper_01 = lower_01 + wid_01) %>%
+  arrange(lower_01)
+
+consensus_005 <- data.frame(
+  idx = 1:J,
+  name = item_names_quantifier,
+  Constant = ".005",
+  lower_005 = fit_005$summary("Tr_splx") %>% as.data.frame() %>% pull(median) %>% .[1:J],
+  wid_005 = fit_005$summary("Tr_splx") %>% as.data.frame() %>% pull(median) %>% .[(J +
+                                                                             1):(J * 2)]
+) %>%
+  mutate(loc_005 = lower_005 + wid_005 / 2, upper_005 = lower_005 + wid_005) %>%
+  arrange(lower_005)
+
+consensus_001 <- data.frame(
+  idx = 1:J,
+  name = item_names_quantifier,
+  Constant = ".001",
+  lower_001 = fit_001$summary("Tr_splx") %>% as.data.frame() %>% pull(median) %>% .[1:J],
+  wid_001 = fit_001$summary("Tr_splx") %>% as.data.frame() %>% pull(median) %>% .[(J +
+                                                                             1):(J * 2)]
+) %>%
+  mutate(loc_001 = lower_001 + wid_001 / 2, upper_001 = lower_001 + wid_001) %>%
+  arrange(lower_001)
+
+```
+
+
+```{r}
+colors <- c(".01" = "#d95f02", ".005" = "#7570b3", ".001" = "#1b9e77")
+
+  ggplot() +
+  geom_errorbarh(data = consensus_01, aes(x = loc_01, y = 1:J, xmin = lower_01, xmax = upper_01, col = ".01"), height = 0.3) +
+  geom_errorbarh(data = consensus_005, aes(x = loc_005, y = 1:J + .3, xmin = lower_005, xmax = upper_005, col = ".005"), height = 0.3) +
+  geom_errorbarh(data = consensus_001, aes(x = loc_001, y = 1:J + .6, xmin = lower_001, xmax = upper_001, col = ".001"), height = 0.3) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    labels = seq(0, 1, .25),
+    expand = expansion()
+  ) +
+  scale_y_continuous(breaks = 1:J, labels = item_names_quantifier[consensus_01$idx]) +
+  scale_color_manual(values = colors) +
+    guides(color = guide_legend(reverse = TRUE)) +
+  labs(x = "Latent Truth", y = NULL, col = "Padding Constant") +
+  theme_icm(base_size = 16, hide_axis_text_y = F) +
+  theme(
+    #panel.grid = element_blank(),
+    axis.line.y = element_blank(),
+    axis.ticks.x = element_line(colour = "#6d6d6e")
+  )
+
+# save plot
+ggsave(
+  here("plots", "consensus_intervals_sensitivity.pdf"),
+  width = 15,
+  height = 10,
+  units = "cm",
+  scale = 1.3
+)
+ggsave(
+  here("plots", "consensus_intervals_sensitivity.jpg"),
+  width = 15,
+  height = 10,
+  units = "cm",
+  scale = 1
+)
+```
+
+Choosing a smaller padding constant, i.e., moving the extreme values for the intervals closer to zero and one, does not change the estimates for the consensus intervals in a substantively meaningful way. However, wider consensus intervals become a bit wider for the more extreme padding constant. In contrast, very narrow consensus intervals become a bit narrower. This is due to the fact that extreme values in the transformed space are exaggerated by stretching the scale more severely with the smaller padding constant.
+
+
+
+
+
+

@@ -30,7 +30,7 @@ params:
   refit: false
 ---
 
-```{r setup, include = FALSE}
+```{r setup}
 # Libraries
 packages <- c(
   "quarto",
@@ -39,7 +39,6 @@ packages <- c(
   "readxl",
   "cmdstanr",
   "bayesplot",
-  "bayesTestR",
   "posterior",
   "bayestestR",
   "rmarkdown",
@@ -47,6 +46,7 @@ packages <- c(
   "svglite",
   "psych",
   "here",
+  "osfr",
   "ggpubr",
   "ggokabeito",
   "ggh4x",
@@ -63,19 +63,38 @@ source("00_functions.R")
 
 # Load Data
 ```{r}
-### Load Data
-df_long <- read_rds(here("data", "interval_multi_apps_long.rds"))
+# Download cleaned data (Kloft & Heck, 2024) from OSF
+if (!file.exists(here("data", "df_master_long.rds"))) {
+  osf_retrieve_file("https://osf.io/7azbr") |>
+    osf_download(path = here("data"))
+}
+
+# Load Data and retain all rows with the verbal quantifier task
+df_long <- read_rds(here("data", "df_master_long.rds")) |>
+  dplyr::filter(domain == "prob_phrase") |> 
+  # recompute indices
+  mutate(jj = as.integer(factor(jj)),
+         ii = as.integer(factor(ii)))
+
+df_long$name_en[df_long$name_en == "Fifty-fifty chance"] <- "fifty-fifty chance"
 
 # item names
-item_names_quantifier <- df_long %>% 
-  dplyr::select(jj, name_en) %>% 
-  distinct() %>% 
-  arrange(jj) %>% 
+item_names_quantifier <- df_long %>%
+  dplyr::select(jj, name_en) %>%
+  distinct() %>%
+  arrange(jj) %>%
   pull(name_en)
 ```
 
 ## Stan Data
 ```{r}
+# rescale the responses to get rid of zeros
+df_long <- df_long %>%
+  dplyr::mutate(
+    x_L_rescaled = (x_L / 100 + .01) / 1.03,
+    x_U_rescaled = (x_U / 100 + .02) / 1.03
+  )
+
 ### Stan data declaration
 df_long <- df_long %>% dplyr::filter(!is.na(x_splx_1))
 
@@ -85,9 +104,10 @@ N  = nrow(df_long)
 ii = df_long$ii
 jj = df_long$jj
 nn = c(1:N)
-Y_splx = cbind(df_long$x_splx_1,
-           df_long$x_splx_2,
-           df_long$x_splx_3) %>% 
+Y_splx = cbind(
+  df_long$x_L_rescaled,
+  df_long$x_U_rescaled - df_long$x_L_rescaled,
+  1 - df_long$x_U_rescaled) |> 
   as.matrix()
 
 #Y_splx[is.na(Y_splx)]
@@ -104,7 +124,8 @@ stan_data <- list(
   ii = ii,
   jj = jj,
   nn = nn,
-  Y_splx = Y_splx
+  Y_splx = Y_splx,
+  padding = .005
 )
 
 # Choose model to fit
@@ -265,7 +286,7 @@ mcmc_intervals(fit$draws(E_loc_ordered), point_est = "median", transformations =
     y = "Respondent"
   ) +
   scale_y_discrete(labels = NULL, expand = expansion(.02)) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -281,7 +302,7 @@ mcmc_intervals(fit$draws(E_wid_ordered), point_est = "median",transformations = 
        x = expression(E[wid]),
        y = "Respondent") +
   scale_y_discrete(labels = NULL, expand = expansion(.02)) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -295,7 +316,7 @@ mcmc_intervals(fit$draws("rho_E"), point_est = "median") +
     y = "Respondent"
   ) +
   scale_x_continuous(limits = c(-1,1), expand = expansion()) +
-  theme_itm(base_size = 16, hide_axis_text_y = TRUE) +
+  theme_icm(base_size = 16, hide_axis_text_y = TRUE) +
   theme(panel.grid = element_blank())
 ```
 
@@ -317,7 +338,7 @@ a_loc_ordered <-
     y = "Respondent"
   ) +
   scale_y_discrete(labels = NULL, expand = expansion(.02)) +
-  theme_itm(base_size = 16, hide_axis_text_y = TRUE) +
+  theme_icm(base_size = 16, hide_axis_text_y = TRUE) +
   theme(panel.grid = element_blank())
 ```
 
@@ -338,7 +359,7 @@ b_loc_ordered <-
     y = "Respondent"
   ) +
   scale_y_discrete(labels = NULL, expand = expansion(.02)) +
-  theme_itm(base_size = 16, hide_axis_text_y = TRUE) +
+  theme_icm(base_size = 16, hide_axis_text_y = TRUE) +
   theme(panel.grid = element_blank())
 ```
 
@@ -360,7 +381,7 @@ mcmc_intervals(fit$draws(b_wid_ordered), point_est = "median") +
     y = "Respondent"
   ) +
   scale_y_discrete(labels = NULL, expand = expansion(.02)) +
-  theme_itm(base_size = 16, hide_axis_text_y = TRUE) +
+  theme_icm(base_size = 16, hide_axis_text_y = TRUE) +
   theme(panel.grid = element_blank())
 ```
 
@@ -373,7 +394,7 @@ mcmc_intervals(fit$draws("lambda_loc"), point_est = "median", transformations = 
     y = "Respondent"
   ) +
   scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02)) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -386,7 +407,7 @@ mcmc_intervals(fit$draws("lambda_wid"), point_est = "median",transformations = "
     y = "Respondent"
   ) +
   scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02)) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -396,7 +417,7 @@ mcmc_intervals(fit$draws("rho_lambda"), point_est = "median") +
   bayesplot::vline_0(linetype = "dashed", color = "grey70") +
   labs(x = expression(rho[lambda]), y = NULL) +
   scale_x_continuous(limits = c(-1, 1), expand = expansion()) +
-  theme_itm(base_size = 16, hide_axis_text_y = TRUE) +
+  theme_icm(base_size = 16, hide_axis_text_y = TRUE) +
   theme(panel.grid = element_blank())
 ```
 
@@ -412,13 +433,13 @@ mcmc_intervals(fit$draws(c("omega")), point_est = "median") +
   ) +
   scale_x_continuous(limits = c(-1,1), expand = expansion()) +
   scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02)) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
 ### Latent Consensus Intervals
 ```{r}
-latent_truth <- data.frame(
+consensus <- data.frame(
   idx = 1:J,
   name = item_names_quantifier,
   lower = fit$summary("Tr_splx") %>% as.data.frame() %>% pull(median) %>% .[1:J],
@@ -428,7 +449,7 @@ latent_truth <- data.frame(
   mutate(loc = lower + wid / 2, upper = lower + wid) %>%
   arrange(lower)
 
-latent_truth %>% 
+consensus %>% 
   ggplot(aes(x = loc, y = 1:J)) +
   geom_errorbarh(aes(xmin = lower, xmax = upper), height = 0.3) +
   scale_x_continuous(
@@ -436,24 +457,27 @@ latent_truth %>%
     labels = seq(0, 1, .25),
     expand = expansion()
   ) +
-  scale_y_continuous(breaks = 1:J, labels = item_names_quantifier[latent_truth$idx]) +
+  scale_y_continuous(breaks = 1:J, labels = item_names_quantifier[consensus$idx]) +
   labs(x = "Latent Truth",
        y = "Item") +
-  theme_itm(base_size = 16) +
-  theme(panel.grid = element_blank(), , axis.line.y = element_blank())
+  theme_icm(base_size = 16) +
+  theme(panel.grid = element_blank(),
+        axis.line.y = element_blank(),
+    axis.ticks.x = element_line(colour = "#6d6d6e")
+    )
 
 # save plot
 ggsave(
-  here("plots", "consensus_intervals_full_model.pdf"),
+  here("plots", "empirical_example", "consensus_intervals_full_model.pdf"),
   width = 15,
   height = 8,
   units = "cm",
-  scale = 1.4
+  scale = 1.3
 )
 ```
 
 ```{r}
-latent_truth %>% 
+consensus %>% 
   mutate(across(c(lower, wid, loc, upper), ~round(., 3)*100)) %>% 
   select(-idx,-wid)
 ```
@@ -606,7 +630,7 @@ E_loc_ordered <-
     y = "Respondent"
   ) +
   scale_y_discrete(labels = NULL, expand = expansion(.02)) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -623,7 +647,7 @@ E_wid_ordered <-
        x = expression(log(E_wid[i])),
        y = "Respondent") +
   scale_y_discrete(labels = NULL, expand = expansion(.02)) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -637,7 +661,7 @@ mcmc_intervals(fit_quantifier$draws("rho_E"), point_est = "median") +
     y = "Respondent"
   ) +
   xlim(-1,1)  +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -663,7 +687,7 @@ mcmc_intervals(fit_quantifier$draws(a_loc_ordered), point_est = "median", transf
     y = "Respondent"
   ) +
   scale_y_discrete(labels = NULL, expand = expansion(.02)) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -676,7 +700,7 @@ mcmc_intervals(fit_quantifier$draws("b_wid"), point_est = "median") +
     y = "Respondent"
   ) +
   scale_y_discrete(labels = NULL, expand = expansion(.02)) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -689,7 +713,7 @@ mcmc_intervals(fit_quantifier$draws("b_wid"), point_est = "median") +
     y = "Item"
   ) +
   scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02))  +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -702,7 +726,7 @@ mcmc_intervals(fit_quantifier$draws("lambda_wid"), point_est = "median",transfor
     y = "Item"
   ) +
   scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02)) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -713,7 +737,7 @@ mcmc_intervals(fit_quantifier$draws("rho_lambda"), point_est = "median") +
     x = expression(Omega[j])
   ) +
   xlim(-1,1) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -734,13 +758,13 @@ fit_quantifier$draws("rho_lambda") %>%
   ) +
   scale_x_continuous(limits = c(-1,1)) +
   scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02)) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
 ### Latent Truth Intervals
 ```{r}
-latent_truth <- data.frame(
+consensus <- data.frame(
   idx = 1:J,
   name = item_names_quantifier,
   lower_consensus = fit_quantifier$summary("Tr_splx") %>%
@@ -758,7 +782,7 @@ latent_truth <- data.frame(
   ) %>%
   arrange(lower_consensus)
 
-latent_truth %>%
+consensus %>%
   # plot
   ggplot(aes(x = loc_consensus, y = 1:J)) +
   geom_errorbarh(aes(xmin = lower_consensus, xmax = upper_consensus), height = 0.3) +
@@ -767,23 +791,28 @@ latent_truth %>%
     labels = seq(0, 1, .25),
     expand = expansion()
   ) +
-  scale_y_continuous(breaks = 1:J, labels = item_names_quantifier[latent_truth$idx]) +
-  labs(x = "Latent Truth", y = "Item") +
-  theme_itm(base_size = 16) +
-  theme(panel.grid = element_blank(), axis.line.y = element_blank())
+  scale_y_continuous(breaks = 1:J, labels = item_names_quantifier[consensus$idx]) +
+  labs(x = "Consensus Probabilities", y = NULL) +
+  theme_icm(base_size = 14) +
+  theme(
+    panel.grid.x = element_blank(),
+    
+    axis.line.y = element_blank(),
+    axis.ticks.x = element_line(colour = "#6d6d6e")
+  )
 
 # save plot
 ggsave(
-  here("plots", "consensus_intervals_custom_model.pdf"),
+  here("plots", "empirical_example", "consensus_intervals_custom_model.pdf"),
   width = 15,
   height = 8,
   units = "cm",
-  scale = 1.4
+  scale = 1.3
 )
 ```
 
 ```{r}
-latent_truth %>% 
+consensus %>% 
   mutate(across(c(lower_consensus, wid_consensus, loc_consensus, upper_consensus), ~round(., 3)*100)) %>% 
   select(-idx,-wid_consensus)
 ```
@@ -803,13 +832,21 @@ df_long <- df_long %>%
     lower_mean = loc_mean - wid_mean / 2,
     upper_mean = loc_mean + wid_mean / 2,
     loc_mean_logit = mean(x_bvn_1, na.rm = TRUE),
-    wid_mean_logit = mean(x_bvn_2, na.rm = TRUE)
+    wid_mean_logit = mean(x_bvn_2, na.rm = TRUE),
+    loc_median_logit = median(x_bvn_1, na.rm = TRUE),
+    wid_median_logit = median(x_bvn_2, na.rm = TRUE)
   ) %>%
   ungroup()
 
 splx <- bvn_to_simplex(df_long[, c("loc_mean_logit", "wid_mean_logit")])
 df_long$lower_mean_logit <- splx[, 1]
 df_long$upper_mean_logit <- 1 - splx[, 3]
+
+splx <- bvn_to_simplex(df_long[, c("loc_median_logit", "wid_median_logit")])
+df_long$lower_median_logit <- splx[, 1]
+df_long$upper_median_logit <- 1 - splx[, 3]
+
+rm(splx)
 ```
 
 ### Plot: Verbal Quantifiers All
@@ -823,9 +860,11 @@ df <- df_long %>%
          upper_mean,
          lower_mean_logit,
          upper_mean_logit,
+         lower_median_logit,
+         upper_median_logit,
          truth) %>%
   remove_missing(vars = c("x_L", "x_U")) %>%
-  full_join(., latent_truth, by = c("jj" = "idx"))
+  full_join(., consensus, by = c("jj" = "idx"))
 
 plot_density <-
   plot_intvls_aggregated(
@@ -834,8 +873,8 @@ plot_density <-
     item_id = as.double(df$jj),
     lower_mean = df$lower_consensus * 100,
     upper_mean = df$upper_consensus * 100,
-    lower_mean_logit = df$lower_mean_logit * 100,
-    upper_mean_logit = df$upper_mean_logit * 100,
+    lower_mean_logit = df$lower_median_logit * 100,
+    upper_mean_logit = df$upper_median_logit * 100,
     item_name = df$name_en,
     facet_wrap = TRUE,
     min = 0,
@@ -849,7 +888,7 @@ plot_density
 # save plot
 ggsave(
   plot = plot_density,
-  here("plots", "verbal_quantifier_densities_all.pdf"),
+  here("plots", "empirical_example", "verbal_quantifier_densities_all.pdf"),
   width = 15,
   height = 15,
   units = "cm",
@@ -869,15 +908,18 @@ df <- df_long %>%
     upper_mean,
     lower_mean_logit,
     upper_mean_logit,
+    lower_median_logit,
+    upper_median_logit,
     truth
   ) %>%
-  dplyr::filter(name_en %in% c("fifty-fifty chance", "hardly", "potentially")) %>%
-  full_join(., latent_truth, by = c("jj" = "idx")) %>%
+  dplyr::filter(name_en %in% c("fifty-fifty chance", "hardly", "potentially", "never", "always")) %>%
+  full_join(., consensus, by = c("jj" = "idx")) %>%
   remove_missing(vars = c("x_L", "x_U"))
 
 
 # Layout for facet wrap
-design <- matrix(c(1, 2, 1, 3), 2, 2)
+design <- matrix(c(2, 2,  4, 1, 3, 5), 3, 2, byrow = TRUE)
+
 # plot
 plot_selection <-
   plot_intvls_aggregated(
@@ -886,10 +928,10 @@ plot_selection <-
     item_id = as.double(df$jj),
     lower_mean = df$lower_consensus * 100,
     upper_mean = df$upper_consensus * 100,
-    lower_mean_logit = df$lower_mean_logit * 100,
-    upper_mean_logit = df$upper_mean_logit * 100,
+    lower_mean_logit = df$lower_median_logit * 100,
+    upper_mean_logit = df$upper_median_logit * 100,
     item_name = (df$name_en),
-    truth = df$truth,
+    #truth = df$truth,
     facet_wrap = TRUE,
     design = design,
     ncol = 2,
@@ -903,18 +945,15 @@ plot_selection
 # save plot
 ggsave(
   plot = plot_selection,
-  here("plots", "verbal_quantifier_densities_example.pdf"),
+  here("plots", "empirical_example", "verbal_quantifier_densities_example.pdf"),
   width = 15,
-  height = 7.5,
+  height = 10,
   units = "cm",
   scale = 1.6
 )
 ```
-
-
-```{r}
 ### Plot for slides
-
+```{r}
 df <- df_long %>%
     select(
     jj,
@@ -928,7 +967,7 @@ df <- df_long %>%
     truth
   ) %>%
   dplyr::filter(name_en %in% c("fifty-fifty chance")) %>%
-  full_join(., latent_truth, by = c("jj" = "idx")) %>%
+  full_join(., consensus, by = c("jj" = "idx")) %>%
   remove_missing(vars = c("x_L", "x_U")) 
 
 
@@ -955,7 +994,7 @@ plot_selection <-  plot_intvls_aggregated(
 # save plot
 ggsave(
   plot = plot_selection,
-  here("plots", "verbal_quantifier_densities_50-50.pdf"),
+  here("plots", "empirical_example", "verbal_quantifier_densities_50-50.pdf"),
   width = 15,
   height = 5,
   units = "cm",
@@ -964,16 +1003,15 @@ ggsave(
 
 ggsave(
   plot = plot_selection,
-  here("plots", "verbal_quantifier_densities_50-50.svg"),
+  here("plots", "empirical_example", "verbal_quantifier_densities_50-50.svg"),
   width = 15,
   height = 5,
   units = "cm",
   scale = 1.6
 )
 ```
-
-```{r}
 ### Plot for slides
+```{r}
 df <- df_long %>%
   select(
     jj,
@@ -988,7 +1026,7 @@ df <- df_long %>%
     truth
   ) %>%
   dplyr::filter(name %in% c("meistens")) %>%
-  full_join(., latent_truth, by = c("jj" = "idx")) %>%
+  full_join(., consensus, by = c("jj" = "idx")) %>%
   remove_missing(vars = c("x_L", "x_U")) 
 
 
@@ -1015,7 +1053,7 @@ plot_selection <-  plot_intvls_aggregated(
 # save plot
 ggsave(
   plot = plot_selection,
-  here("plots", "verbal_quantifier_densities_mostly.pdf"),
+  here("plots", "empirical_example", "verbal_quantifier_densities_mostly.pdf"),
   width = 15,
   height = 5,
   units = "cm",
@@ -1024,7 +1062,7 @@ ggsave(
 
 ggsave(
   plot = plot_selection,
-  here("plots", "verbal_quantifier_densities_mostly.svg"),
+  here("plots", "empirical_example", "verbal_quantifier_densities_mostly.svg"),
   width = 15,
   height = 5,
   units = "cm",
@@ -1095,7 +1133,7 @@ plot_proficiency_vs_intervals <-
     x = "Response Interval / <span style='color: #0072B2;'>Transformed Proficiency</span>", 
     y = "Respondent") +
   coord_cartesian(clip = "off") +
-  theme_itm() +
+  theme_icm() +
   theme(
     axis.title.x = ggtext::element_markdown(),
     axis.line = element_line(colour = "#6d6d6e", size = .3),
@@ -1108,7 +1146,7 @@ plot_proficiency_vs_intervals <-
 
 ggsave(
   plot = plot_proficiency_vs_intervals,
-  filename = here("plots", "proficiency_vs_intervals.pdf"),
+  filename = here("plots", "empirical_example", "proficiency_vs_intervals.pdf"),
   width = 15,
   height = 10,
   units = "cm",
@@ -1121,55 +1159,115 @@ plot_proficiency_vs_intervals
 # Prior vs. Posterior
 ## True Intervals
 ```{r}
-latent_truth <- data.frame(
+# get posterior
+consensus <- data.frame(
   Tr_loc_splx_post = fit_quantifier$draws("Tr_loc_splx") %>%
     unlist() %>%
     as.vector(),
   Tr_wid_splx_post = fit_quantifier$draws("Tr_wid_splx") %>%
     unlist() %>%
     as.vector()
-) %>%
+)  %>%
+  mutate(jj = (rep(1:J, each = nrow(.) / J))) %>%
+  group_by(jj)  %>%
   mutate(
-    jj = factor(rep(1:J, each = nrow(.) / J)),
-    Tr_wid_splx_prior = rbeta(nrow(.), 1.2, 3),
-    Tr_loc_splx_prior = (1 - Tr_wid_splx_prior) * rbeta(nrow(.), 1, 1) + Tr_wid_splx_prior / 2
-  )
+    text_x = mean(Tr_loc_splx_post),
+    text_y_mean = mean(Tr_wid_splx_post),
+    text_y_max = max(Tr_wid_splx_post)
+  ) %>%
+  ungroup()  %>%
+  full_join(., df_long %>%
+              select(jj, name_en), by = c("jj" = "jj")) |> 
+  slice_sample(n = 1000, by = jj) 
 
-Tr_bvn <- simplex_to_bvn(
-  cbind(
-    latent_truth$Tr_loc_splx_prior - .5 * latent_truth$Tr_wid_splx_prior,
-    latent_truth$Tr_wid_splx_prior,
-    1 - (
-      latent_truth$Tr_loc_splx_prior + .5 * latent_truth$Tr_wid_splx_prior
-    )
-  )
-)
-latent_truth <- cbind(latent_truth,
-                      Tr_loc_prior = Tr_bvn[, 1], Tr_wid_prior = Tr_bvn[, 2])
+# compute prior samples
+n_samples <- 1e6
+Tr_prior_samples <- data.frame(Tr_wid_prior = rbeta(n_samples, 1.2, 3))
+Tr_prior_samples$Tr_loc_prior <-
+  rbeta(n_samples, 1, 1) * (1 - Tr_prior_samples$Tr_wid_prior) + Tr_prior_samples$Tr_wid_prior / 2
 
-
-latent_truth %>%
+# Plot
+consensus %>%
   ggplot() +
-  geom_abline(intercept = 0,
-              slope = 2,
-              alpha = .7) +
-  geom_abline(intercept = 2,
-              slope = -2,
-              alpha = .7) +
+  # prior density
   geom_density_2d_filled(
-    aes(x = Tr_loc_splx_prior, 
-        y = Tr_wid_splx_prior), 
-    alpha = .3, 
-    binwidth = .05
-    ) +
+    data = Tr_prior_samples,
+    aes(
+      x = Tr_loc_prior,
+      y = Tr_wid_prior,
+      fill = after_stat(as.numeric(level) / max(as.numeric(level)))
+    ),
+    bins = 100,
+    # Increase number of bins
+    alpha = 0.5,
+    show.legend = TRUE
+  ) +
+  # legend for prior density
+  scale_fill_viridis_c(name = "Prior Density", alpha = .5, 
+                       breaks = c(0,.25,.5,.75,1), 
+                       labels = c("0",".25",".5",".75","1")) +
+  # mask everything outside of the ternary space
+  annotate(
+    geom = "polygon",
+    x = c(0,-Inf, -Inf,  .5),
+    y = c(0,  0, Inf, Inf),
+    color = "white",
+    fill = "white"
+  ) +
+  annotate(
+    geom = "polygon",
+    x = c(1, Inf, Inf, .5),
+    y = c(0, 0, Inf, Inf),
+    color = "white",
+    fill = "white"
+  ) +
+  # triangle lines
+  geom_segment(aes(
+    x = 0,
+    y = 0,
+    xend = .5,
+    yend = 1
+  )  ,
+  col = "#6d6d6e",
+  lineend = "round") +
+  geom_segment(aes(
+    x = 1,
+    y = 0,
+    xend = .5,
+    yend = 1
+  ),
+  col = "#6d6d6e",
+  lineend = "round") +
+  # posterior samples
   geom_point(
-    aes(x = Tr_loc_splx_post, y = Tr_wid_splx_post, col = jj),
+    data = consensus,
+    aes(x = Tr_loc_splx_post, y = Tr_wid_splx_post, col = factor(jj)),
     size = .3,
-    alpha = .3,
+    alpha = .05,
     shape = 16
   ) +
+  geom_segment(
+    data = consensus |> distinct(jj, .keep_all = TRUE),
+    aes(
+    x = text_x,
+    y = text_y_mean,
+    xend = text_x,
+    yend = text_y_max + .002
+  )) +
+  geom_label(
+    data = consensus |> distinct(jj, .keep_all = TRUE),
+    aes(x = text_x, y  = text_y_max, label = name_en),
+    label.size = 0,
+    alpha = .5,
+    label.padding = unit(0.25, "lines"),
+    nudge_y = .02,
+    size.unit = "pt", 
+    size = 12,
+  ) +
+  # format scales
   scale_x_continuous(
-    limits = c(0, 1),
+    limits = c(-.05, 1.05),
+    breaks = seq(0, 1, .25),
     labels = c("0", ".25", ".5", ".75", "1"),
     expand = expansion()
   ) +
@@ -1178,28 +1276,186 @@ latent_truth %>%
     labels = c("0", ".25", ".5", ".75", "1"),
     expand = expansion()
   ) +
+  coord_equal(clip = "off") +
   labs(x = "Location", y = "Width") +
-  # supress legends
+  # suppress legends
   guides(col = FALSE, fill = FALSE) +
-  theme_pubr()
+  theme_icm() +
+  theme(
+    panel.grid = ggplot2::element_line(colour = "white"),
+    plot.margin = margin(.3, 0, -.03, 0, "cm"),
+    legend.position = "right",
+    legend.title = element_text(
+      margin = margin(b = 15),
+      # Top, Right, Bottom, Left
+      size = 14
+      )
+  )
+```
+
+### Plot for article with selected quantifiers
+```{r}
+# Data
+consensus_selection <- 
+  consensus |> 
+  dplyr:: filter(
+    name_en %in% c(
+      "never",
+      "rarely",
+      "now and then",
+      "possibly",
+      "potentially",
+      "fifty-fifty chance",
+      "frequently",
+      "almost always",
+      "always"
+    )
+  ) 
+# Plot
+ggplot() +
+  # prior density
+  geom_density_2d_filled(
+    data = Tr_prior_samples,
+    aes(
+      x = Tr_loc_prior,
+      y = Tr_wid_prior,
+      fill = after_stat(as.numeric(level) / max(as.numeric(level)))
+    ),
+    bins = 100,
+    # Increase number of bins
+    alpha = 0.5,
+    show.legend = TRUE
+  ) +
+  # legend for prior density
+  scale_fill_viridis_c(name = "Prior Density", alpha = .5, 
+                       breaks = c(0,.25,.5,.75,1), 
+                       labels = c("0",".25",".5",".75","1")) +
+  # mask everything outside of the ternary space
+  annotate(
+    geom = "polygon",
+    x = c(0, -Inf, -Inf, .5),
+    y = c(0, 0, Inf, Inf),
+    color = "white",
+    
+    fill = "white"
+  ) +
+  annotate(geom = "polygon",
+           x = c(1, Inf, Inf, .5),
+           y = c(0, 0,  Inf, Inf),
+    color = "white",
+    fill = "white"
+  ) +
+  # triangle lines
+  geom_segment(aes(
+    x = 0,
+    y = 0,
+    xend = .5,
+    yend = 1
+  )  ,
+  col = "#6d6d6e",
+  lineend = "round") +
+  geom_segment(aes(
+    x = 1,
+    y = 0,
+    xend = .5,
+    yend = 1
+  ),
+  col = "#6d6d6e",
+  lineend = "round") +
+  # posterior samples
+  geom_point(
+    data = consensus_selection,
+    aes(x = Tr_loc_splx_post, y = Tr_wid_splx_post),
+    col = "#d95f02",
+    size = .3,
+    alpha = .3,
+    shape = 16
+  ) +
+  geom_segment(
+    data = consensus_selection |> distinct(jj, .keep_all = TRUE),
+    aes(
+    x = text_x,
+    y = text_y_mean,
+    xend = text_x,
+    yend = text_y_max + .002
+  )) +
+  geom_label(
+    data = consensus_selection |> distinct(jj, .keep_all = TRUE),
+    aes(x = text_x, y  = text_y_max, label = name_en),
+    label.size = 0,
+    alpha = .5,
+    label.padding = unit(0.25, "lines"),
+    nudge_y = .02,
+    size.unit = "pt", 
+    size = 12,
+  ) +
+  # format scales
+  scale_x_continuous(
+    limits = c(-.05, 1.05),
+    breaks = seq(0, 1, .25),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    labels = c("0", ".25", ".5", ".75", "1"),
+    expand = expansion()
+  ) +
+  coord_equal() +
+  labs(x = "Location", y = "Width") +
+  # suppress legends
+  guides(col = FALSE) +
+  theme_icm() +
+  theme(
+    panel.grid = ggplot2::element_line(colour = "white"),
+    plot.margin = margin(.3, 0, -.03, 0, "cm"),
+    legend.position = "right",
+    legend.title = element_text(
+      margin = margin(b = 15),
+      # Top, Right, Bottom, Left
+      size = 14
+      )
+  )
+
+ggsave(
+  plot = last_plot(),
+  filename = here("plots", "empirical_example", "prior_vs_posterior_quantifiers_selection.pdf"),
+  width = 15,
+  height = 10,
+  units = "cm",
+  scale = 1.4
+)
+
+ggsave(
+  plot = last_plot(),
+  filename = here("plots", "empirical_example", "prior_vs_posterior_quantifiers_selection.svg"),
+  width = 15,
+  height = 10,
+  units = "cm",
+  scale = 1.4
+)
 ```
 
 
 ## Hyper-Priors
 ### sigma_lambda: Location
 ```{r}
+colors <- c("Prior" = "lightblue", "Posterior" = "purple")
+
 sigma_lambda_loc <- data.frame(posterior = fit_quantifier$draws("sigma_lambda[1]", format = "list") %>% unlist() %>%  as.vector())
 sigma_lambda_loc$prior <- exp(rnorm(nrow(sigma_lambda_loc), log(.5), .5))
 
 sigma_lambda_loc %>%
   ggplot() +
-  geom_density(aes(prior), fill = "lightblue", alpha = 1) +
-  geom_density(aes(exp(posterior * .5 + log(.5))), fill = "purple", alpha = .3) +
+  geom_density(aes(prior, fill = "Prior"), alpha = 1) +
+  geom_density(aes(exp(posterior * .5 + log(.5)), fill = "Posterior"), alpha = .3) +
   scale_x_continuous(limits = c(NA, 3), expand = expansion()) +
   scale_y_continuous(limits = c(0, NA), expand = expansion()) +
-  labs(x = "Prior / Posterior", y = "Density")  +
-  theme_itm(base_size = 16) +
-  theme(panel.grid = element_blank())
+  scale_fill_manual(values = colors) +
+  labs(x = "Prior / Posterior", y = "Density", fill = NULL)  +
+  theme_icm(base_size = 16) +
+  theme(panel.grid = element_blank(), 
+        legend.position = "right")
 ```
 
 ### sigma_lambda: Width
@@ -1212,11 +1468,9 @@ sigma_lambda_wid$prior <- exp(rnorm(nrow(sigma_lambda_loc), log(.5), .5))
 sigma_lambda_wid %>% 
   ggplot() +
   geom_density(
-    aes(prior),
-    fill = "lightblue",
+    aes(prior,fill = "Prior"),
     alpha = 1  ) +
-  geom_density(aes(exp(posterior*.5+log(.5))),
-               fill = "purple",
+  geom_density(aes(exp(posterior*.5+log(.5)), fill = "Posterior"),
                alpha = .3
                ) +
   scale_x_continuous(
@@ -1224,9 +1478,11 @@ sigma_lambda_wid %>%
     expand = expansion()
   ) +
   scale_y_continuous(limits = c(0, NA), expand = expansion()) +
-  labs(x = "Prior / Posterior", y = "Density") +
-  theme_itm(base_size = 16) +
-  theme(panel.grid = element_blank())
+  scale_fill_manual(values = colors) +
+  labs(x = "Prior / Posterior", y = "Density", fill = NULL) +
+  theme_icm(base_size = 16) +
+  theme(panel.grid = element_blank(), 
+        legend.position = "right")
 ```
 
 ### sigma_E: Location
@@ -1239,11 +1495,9 @@ sigma_E_loc$prior <- exp(rnorm(nrow(sigma_lambda_loc), log(.5), .5))
 sigma_E_loc %>% 
   ggplot() +
   geom_density(
-    aes(prior),
-    fill = "lightblue",
+    aes(prior,fill = "Prior"),
     alpha = 1  ) +
-  geom_density(aes(exp(posterior*.5+log(.5))),
-               fill = "purple",
+  geom_density(aes(exp(posterior*.5+log(.5)), fill = "Posterior"),
                alpha = .3
                ) +
   scale_x_continuous(
@@ -1251,9 +1505,11 @@ sigma_E_loc %>%
     expand = expansion()
   ) +
   scale_y_continuous(limits = c(0, NA), expand = expansion()) +
-  labs(x = "Prior / Posterior", y = "Density") +
-  theme_itm(base_size = 16) +
-  theme(panel.grid = element_blank())
+  scale_fill_manual(values = colors) +
+  labs(x = "Prior / Posterior", y = "Density", fill = NULL) +
+  theme_icm(base_size = 16) +
+  theme(panel.grid = element_blank(), 
+        legend.position = "right")
 ```
 
 ### sigma_E: Width
@@ -1266,11 +1522,9 @@ sigma_E_wid$prior <- exp(rnorm(nrow(sigma_lambda_loc), log(.5), .5))
 sigma_E_wid %>% 
   ggplot() +
   geom_density(
-    aes(prior),
-    fill = "lightblue",
+    aes(prior, fill = "Prior"),
     alpha = 1  ) +
-  geom_density(aes(exp(posterior*.5+log(.5))),
-               fill = "purple",
+  geom_density(aes(exp(posterior*.5+log(.5)), fill = "Posterior"),
                alpha = .3
                ) +
   scale_x_continuous(
@@ -1278,9 +1532,11 @@ sigma_E_wid %>%
     expand = expansion()
   ) +
   scale_y_continuous(limits = c(0, NA), expand = expansion()) +
-  labs(x = "Prior / Posterior", y = "Density") +
-  theme_itm(base_size = 16) +
-  theme(panel.grid = element_blank())
+  scale_fill_manual(values = colors) +
+  labs(x = "Prior / Posterior", y = "Density", fill = NULL) +
+  theme_icm(base_size = 16) +
+  theme(panel.grid = element_blank(), 
+        legend.position = "right")
 ```
 
 ### mu_E: Location
@@ -1293,11 +1549,9 @@ mu_E_loc$prior <- rnorm(nrow(sigma_lambda_loc))
 mu_E_loc %>% 
   ggplot() +
   geom_density(
-    aes(prior),
-    fill = "lightblue",
+    aes(prior, fill = "Prior"),
     alpha = 1  ) +
-  geom_density(aes(posterior),
-               fill = "purple",
+  geom_density(aes(posterior, fill = "Posterior"),
                alpha = .3
                ) +
   scale_x_continuous(
@@ -1305,9 +1559,11 @@ mu_E_loc %>%
     expand = expansion()
   ) +
   scale_y_continuous(limits = c(0, NA), expand = expansion()) +
-  labs(x = "Prior / Posterior", y = "Density") +
-  theme_itm(base_size = 16) +
-  theme(panel.grid = element_blank())
+  scale_fill_manual(values = colors) +
+  labs(x = "Prior / Posterior", y = "Density", fill = NULL) +
+  theme_icm(base_size = 16) +
+  theme(panel.grid = element_blank(), 
+        legend.position = "right")
 ```
 
 ### mu_E: Width
@@ -1320,11 +1576,9 @@ mu_E_wid$prior <-  rnorm(nrow(sigma_lambda_loc))
 mu_E_wid %>% 
   ggplot() +
   geom_density(
-    aes(prior),
-    fill = "lightblue",
+    aes(prior, fill = "Prior"),
     alpha = 1  ) +
-  geom_density(aes(posterior),
-               fill = "purple",
+  geom_density(aes(posterior, fill = "Posterior"),
                alpha = .3
                ) +
   scale_x_continuous(
@@ -1332,9 +1586,11 @@ mu_E_wid %>%
     expand = expansion()
   ) +
   scale_y_continuous(limits = c(0, NA), expand = expansion()) +
-  labs(x = "Prior / Posterior", y = "Density") +
-  theme_itm(base_size = 16) +
-  theme(panel.grid = element_blank())
+  scale_fill_manual(values = colors) +
+  labs(x = "Prior / Posterior", y = "Density", fill = NULL) +
+  theme_icm(base_size = 16) +
+  theme(panel.grid = element_blank(), 
+        legend.position = "right")
 ```
 
 
@@ -1361,7 +1617,7 @@ bayesplot::ppc_dens_overlay(
   yrep = Y_ppc_wid
   ) +
   xlim(-10,10) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -1375,7 +1631,7 @@ bayesplot::ppc_dens_overlay(y = df_long$x_M_u, yrep = Y_ppc_loc_splx) +
 ```{r}
 bayesplot::ppc_dens_overlay(y = df_long$x_W_u, yrep = Y_ppc_wid_splx) +
   xlim(0, 1) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -1389,7 +1645,7 @@ bayesplot::ppc_dens_overlay(y = df_long$x_L_u, yrep = Y_ppc_loc_splx - Y_ppc_wid
 ```{r}
 bayesplot::ppc_dens_overlay(y = df_long$x_U_u, yrep = Y_ppc_loc_splx + Y_ppc_wid_splx/2) +
   xlim(0, 1) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -1415,6 +1671,7 @@ stan_data_no_controls <- list(
   ii =  df_long_no_controls$ii,
   jj = df_long_no_controls$jj,
   nn = c(1:nrow(df_long_no_controls)),
+  padding = .01,
   Y_splx = cbind(
     df_long_no_controls$x_splx_1,
     df_long_no_controls$x_splx_2,
@@ -1465,7 +1722,7 @@ mcmc_intervals(
        x = expression(log(lambda[loc])),
        y = "Item") +
   scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02)) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -1480,7 +1737,7 @@ mcmc_intervals(
        x = expression(log(lambda[wid])),
        y = "Item") +
   scale_y_discrete(labels = item_names_quantifier, expand = expansion(.02)) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -1491,7 +1748,7 @@ mcmc_intervals(fit_quantifier_no_controls$draws("rho_lambda"), point_est = "medi
     x = expression(Omega[j])
   ) +
   xlim(-1,1) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 
@@ -1508,7 +1765,7 @@ mcmc_intervals(fit_quantifier_no_controls$draws("rho_E"), point_est = "median") 
     x = expression(Omega[j])
   ) +
   xlim(-1,1) +
-  theme_itm(base_size = 16) +
+  theme_icm(base_size = 16) +
   theme(panel.grid = element_blank())
 ```
 

@@ -1,5 +1,5 @@
 ---
-title: "Interval Truth Model"
+title: "Interval Consensus Model"
 subtitle: "Model Illustrations"
 author: 
  - name: Matthias Kloft
@@ -38,7 +38,8 @@ packages <- c(
   "svglite",
   "psych",
   "here",
-  "ggpubr"
+  "ggpubr",
+  "extraDistr"
 )
 # in case cmdstanr is not installed
 # install.packages("cmdstanr",
@@ -104,7 +105,7 @@ plot_logit_intervals <-
   coord_equal(ratio = 1/5) +
   labs(x = "Interval Response Scale", 
        y = "Item Number", title = "A) Intervals") +
-  theme_itm(hide_axis_text_y = TRUE) +
+  theme_icm(hide_axis_text_y = TRUE) +
   theme(
     plot.margin = margin(l = 0),
     panel.grid = element_blank(),
@@ -149,7 +150,7 @@ plot_logit_ternary <- df %>%
   labs(x = "Bounded Location", 
        y = "Bounded Width", 
        title = "B) Ternary") +
-  theme_itm() +
+  theme_icm() +
   theme(panel.grid = element_blank(), 
         axis.line = element_line(colour = "#6d6d6e", size = .3),
         axis.ticks = element_line(colour = "#6d6d6e", size = .3),
@@ -189,7 +190,7 @@ plot_logit_bvn <-
   labs(x = "Unbounded Location", 
        y = "Unbounded Width", 
        title = "C) Bivariate Normal") +
-  theme_itm() +
+  theme_icm() +
   theme(panel.grid = element_blank(), 
         axis.line = element_line(colour = "#6d6d6e", size = .3),
         axis.ticks = element_line(colour = "#6d6d6e", size = .3),
@@ -256,7 +257,7 @@ plot_comparison <-
   ) +
   facet_wrap(~variable) +
   coord_equal() +
-  theme_itm() +
+  theme_icm() +
   theme(panel.grid = element_blank(), 
         axis.line = element_line(colour = "#6d6d6e", size = .3),
         axis.ticks = element_line(colour = "#6d6d6e", size = .3),
@@ -292,7 +293,8 @@ lambda_wid <- rep(1, n_items)
 
 ```{r}
 reference_data <-
-  generate_itm_one_respondent(
+  generate_icm_one_respondent(
+    n_items = n_items,
     Tr_loc = Tr_loc,
     Tr_wid = Tr_wid,
     lambda_loc = lambda_loc,
@@ -427,29 +429,58 @@ conditions <- c(
 ```{r}
 plot_2d_scatter_list <-
   map(
-    conditions,
-    ~ responses %>%
+    conditions, ~ {
+    data <- responses %>%
       dplyr::filter(condition == .x) %>%
-      mutate(idx = factor(idx) %>% as.double(), ) %>%
-      plot_example_2Dscatter()
-  )
+      #dplyr::filter(idx %in% sample) %>%
+      mutate(idx = factor(idx) %>% as.double())
+    
+    if (.x %in% c("proficiency width", "shifting bias width")) {
+      plot_example_2Dscatter(data)
+    } else {
+      # ommit x-axis label for other conditions
+      plot_example_2Dscatter(data) +
+        theme(axis.title.x = element_blank())
+    }
+  })
+
 plot_2d_scatter_list
 ```
 
 ### Plot: Intervals
 ```{r}
 plot_intervals_list <-
-  map(
-    conditions,
-    ~ responses %>%
+  map(conditions, ~ {
+    data <- responses %>%
       dplyr::filter(condition == .x) %>%
       dplyr::filter(idx %in% sample) %>%
-      mutate(idx = factor(idx) %>% as.double()) %>%
-      plot_example_intervals()
-  )
- 
+      mutate(idx = factor(idx) %>% as.double())
+    
+    if (.x %in% c("proficiency width", "shifting bias width")) {
+      plot_example_intervals(data)
+    } else {
+      # ommit x-axis label for other conditions
+      plot_example_intervals(data) +
+        theme(axis.title.x = element_blank())
+    }
+  })
+
 plot_intervals_list
 ```
+
+
+```{r}
+# plot_intervals_list[[2]] <- 
+#   plot_intervals_list[[2]] +
+#   geom_segment(aes(x = .5, xend = .9, y = 4, yend = 4),
+#     arrow = arrow(),
+#     color = "red",
+#     size = 1, 
+#     linewidth = .1
+#   ) 
+# plot_intervals_list[[2]]
+```
+
 
 ### Plot: combined horizontal
 ```{r}
@@ -486,7 +517,7 @@ plot_combined
 
 ggsave(
   plot = plot_combined, 
-  filename = here("plots", "itm_parameter_illustration.pdf"),
+  filename = here("plots", "icm_parameter_illustration.pdf"),
   width = 15,
   height = 11,
   units = "cm",

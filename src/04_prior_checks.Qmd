@@ -63,55 +63,23 @@ set.seed(35032)
 
 # Latent Appraisal
 
-## True Intervals
-
-### Informative Beta Prior on Marginal Locations and Widths
-
-We are mainly interested in the latent consensus $[T^{loc}_{j}, T^{wid}_{j}]^\top$. 
-First, since we know that very wide interval widths are highly unlikely and also not meaningful in most use cases, we assign a weakly informative prior on the true interval widths on the bounded scale:
-$$
-\begin{equation}
-    T^{wid(0,1)}_j \sim \text{Beta}(1.2, 3)
-\end{equation}
-$$
-This prior has an expected value of $.29$ and a mode of $.09$ and therefore reflects our beliefs about the marginal true interval widths more adequately than a uniform prior.
-
-Second, conditional on a particular interval width, we do not believe that particular interval locations are more likely than others.
-Therefore, we assign an uninformative prior to an auxiliary shifting weight parameter $s_j$, which is subsequently used to compute the actual true locations on the bounded scale:
-$$
-\begin{equation}
-\begin{split}
-    s_j &\sim \text{Beta}(1, 1), \\
-    T^{loc(0,1)}_j &= s_j (1 - T^{wid(0,1)}_j) + \frac{T^{wid(0,1)}_j}{2}. \\
-\end{split}
-\end{equation}
-$$
-This means that for a given interval width, we take what is left of the response scale and multiply it by the shifting weight $s_j$, which results in the lower bound for this particular interval.
-To arrive at the interval location, we add half of the respective interval width to this lower bound.
-
-Third, we transform the true interval from the bounded simplex to the unbounded bivariate scale via the isometric log-ratio function:
-$$
-\begin{equation}
-    \boldsymbol T^* = \text{ILR}\Bigg(\bigg[
-            T^{loc(0,1)}_j - \frac{T^{wid(0,1)}_j}{2}, \;
-            T^{wid(0,1)}_j, \;
-            T^{loc(0,1)}_j + \frac{T^{wid(0,1)}_j}{2}
-            \bigg]^\top\Bigg).
-\end{equation}
-$$
+## True Intervals: Informative Beta Prior on Marginal Locations and Widths
 
 ### Sample From Priors
 ```{r}
 # priors on marginal locations and widths
 df <- data.frame(Tr_wid_splx = rbeta(1e5, 1.2, 3))
-df$Tr_loc_splx <- 
-  (1 - df$Tr_wid_splx) * rbeta(1e5,1,1) + df$Tr_wid_splx / 2
-# transform to bivariate normal
+# multiplicative shifting parameters
+s <- rbeta(1e5,1,1)
+# lower bounds
+df$Tr_L_splx <- 
+  (1 - df$Tr_wid_splx) * s
+# transform from simplex to bivariate normal
 Tr_bvn <- simplex_to_bvn(
   cbind(
-    df$Tr_loc_splx - .5 * df$Tr_wid_splx,
+    df$Tr_L_splx,
     df$Tr_wid_splx,
-    1 - (df$Tr_loc_splx + .5 * df$Tr_wid_splx)))
+    df$Tr_L_splx + df$Tr_wid_splx))
 
 df <- cbind(df, Tr_loc = Tr_bvn[, 1], Tr_wid = Tr_bvn[, 2])
 
