@@ -1171,7 +1171,7 @@ plot_corr <- function(data, pm, param, ...) {
     ggh4x::facet_wrap2(n_items ~ ., axes = "all", nrow = 1) +
     scale_y_continuous(expand = expansion(), limits = c(y_min, y_max)) +
     # ggokabeito::scale_color_okabe_ito(order = c(2, 7))+
-    labs(x = "Number of Respondents", y = "Absolute Bias") +
+    labs(x = "Number of Respondents", y = "Correlation") +
     theme_icm() +
     theme(legend.position = "top", text = element_text(size = 28))
 }
