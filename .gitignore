@@ -1,5 +1,5 @@
-fits/
-sim_results/
+^fits
+^sim_results
 
 # History files
 .Rhistory
@@ -47,3 +47,5 @@ vignettes/*.pdf
 
 
 
+/fits
+/sim_results

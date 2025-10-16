@@ -17,7 +17,10 @@ A BiBTeX entry for LaTeX users is:
 ``` 
 
 
-
+**Note**
+If you encounter the acronym *ITM* in the code or file names, 
+it refers to the Interval Truth Model, which was the name of the model in the first version of the manuscript. 
+The name was later changed to Interval Consensus Model (ICM) to better reflect its purpose.
 
 ## Folder Structure
 ### `data/`
