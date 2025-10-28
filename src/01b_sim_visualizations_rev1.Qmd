@@ -1225,6 +1225,95 @@ for (param in rel_params) {
 :::
 
 
+### All Parameters in One Plot 
+```{r}
+# min for y-axis
+y_min <-
+  sim_res_log |>
+  dplyr::filter(pm == "corr") |>
+  pull(mean) |>
+  min()
+
+
+# data
+plot_corr_all_pars <-   sim_res_log |>
+  dplyr::filter(pm == "corr") |>
+  dplyr::filter(summary == "mean") |>
+  dplyr::mutate(
+    measure = case_when(
+      measure == "Trloc" ~ "T^loc",
+      measure == "Trwid" ~ "T^wid",
+      measure == "aloc" ~ "a^loc~'(log)'",
+      measure == "bloc" ~ "b^loc",
+      measure == "bwid" ~ "b^wid",
+      measure == "Eloc" ~ "E^loc~'(log)'",
+      measure == "Ewid" ~ "E^wid~'(log)'",
+      measure == "lambdaloc" ~ "lambda^loc~'(log)'",
+      measure == "lambdawid" ~ "lambda^wid~'(log)'",
+      measure == "omegacor" ~ "omega"
+    )
+  ) |>
+  dplyr::mutate(n_items = paste0(n_items, " Items")) |>
+  # order n_items correctly
+  dplyr::mutate(n_items = factor(n_items, levels = c("5 Items", "10 Items", "20 Items", "40 Items"))) |>
+  
+  # plot
+  ggplot(aes(
+    x = n_respondents,
+    y = mean,
+    color = n_items,
+    group = n_items
+  )) +
+  # add vertical line between different sample sizes
+  geom_vline(colour = "#F3F4F5", xintercept = seq(1.5, 4, 1)) +
+  geom_point(position = position_dodge(0.7), size = 2.5) +
+  geom_errorbar(
+    aes(ymin = mean - 1 * mcse, ymax = mean + 1 * mcse),
+    width = .8,
+    position = position_dodge(0.7),
+    show.legend = FALSE
+  ) +
+  scale_y_continuous(
+    breaks = seq(0.5, 1, .1),
+    labels = c(".5", ".6", ".7", ".8", ".9", "1"),
+    limits = c(y_min - 0.02, 1.02),
+    expand = expansion()
+  ) +
+  facet_wrap2(
+    vars(measure),
+    ncol = 5,
+    axes = "all",
+    scales = "free",
+    labeller = labeller(measure = label_parsed)
+  ) +
+  ggokabeito::scale_color_okabe_ito(order = c(7, 5, 1, 3)) +
+  labs(x = "Number of Respondents", y = "Correlation", color = NULL) +
+  theme_icm() +
+  # theme(legend.position = "top", text = element_text(size = 14))+
+  # For manuscript plot:
+  theme(
+    legend.position = "top",
+    text = element_text(size = 14),
+    axis.text.x = element_text(size = 14, margin = margin(b = 10, t = 10)),
+    axis.title.x = element_text(margin = margin(t = 12)),
+    axis.text.y = element_text(size = 14),
+    legend.text = element_text(size = 16),
+    strip.background = element_blank(),
+    strip.text = element_text(margin = margin(0, 0, 0, 0))
+  )
+
+plot_corr_all_pars
+
+ggsave(
+  filename = here("plots", "sim_main", "sim_corr.pdf"),
+  plot =  plot_corr_all_pars,
+  width = 11,
+  height = 8,
+  scale = 1
+)
+```
+
+
 
 ## All Measures for All Parameters in One Summary Table
 
